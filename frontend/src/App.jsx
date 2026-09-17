@@ -1,9 +1,14 @@
 // frontend/src/App.jsx
+import { lazy, Suspense } from "react";
 import { BrowserRouter as Router, Routes, Route, Link } from "react-router-dom";
 
 // 引入兩個子專案的入口元件
-import BlockBlastApp from "./features/block_blast_solver/BlockBlastApp.jsx";
-import DeptApp from "./features/dept_simplification/DeptApp.jsx";
+const BlockBlastApp = lazy(
+	() => import("./features/block_blast_solver/BlockBlastApp.jsx"),
+);
+const DeptApp = lazy(
+	() => import("./features/dept_simplification/DeptApp.jsx"),
+);
 
 function Home() {
 	const containerStyle = {
@@ -40,19 +45,22 @@ function Home() {
 	);
 }
 
+const LoadingFallBack = () => {
+	<div style={{ display: "flex", justifyContent: "center", padding: "50px" }}>
+		<h2>模組載入中...</h2>
+	</div>;
+};
+
 export default function App() {
 	return (
 		<Router>
-			<Routes>
-				{/* 首頁 */}
-				<Route path="/" element={<Home />} />
-
-				{/* 把 /blast 開頭的所有路由交給 BlockBlastApp */}
-				<Route path="/blast/*" element={<BlockBlastApp />} />
-
-				{/* 把 /dept 開頭的所有路由交給 DeptApp */}
-				<Route path="/dept/*" element={<DeptApp />} />
-			</Routes>
+			<Suspense fallback={LoadingFallBack}>
+				<Routes>
+					<Route path="/" element={<Home />} />
+					<Route path="/blast/*" element={<BlockBlastApp />} />
+					<Route path="/dept/*" element={<DeptApp />} />
+				</Routes>
+			</Suspense>
 		</Router>
 	);
 }
