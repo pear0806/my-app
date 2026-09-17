@@ -33,11 +33,12 @@ import "./App.css";
 function Toast({ toast, onClose }) {
 	if (!toast) return null;
 	const isError = toast.type === "error";
+	const Icon = isError ? AlertTriangle : Check;
 	return (
 		<div className="toast">
 			<div className="toast-content">
-				<div
-					className={`toast-indicator ${isError ? "is-error" : "is-success"}`}
+				<Icon
+					className={`toast-icon ${isError ? "is-error" : "is-success"}`}
 				/>
 				<p className="toast-message">{toast.message}</p>
 				<button type="button" onClick={onClose} className="toast-close">
@@ -50,6 +51,24 @@ function Toast({ toast, onClose }) {
 
 function Avatar({ name }) {
 	return <span className="avatar">{initials(name)}</span>;
+}
+
+// A tappable "who" chip — reused for participants, and for choosing a
+// payer / debtor instead of a native <select>, so every person-picking
+// interaction in the app looks and behaves the same way.
+function PersonChip({ person, selected, disabled, onClick }) {
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			disabled={disabled}
+			aria-pressed={selected}
+			className={`selector-chip ${selected ? "is-selected" : ""}`}
+		>
+			<Avatar name={person.name} />
+			<span>{person.name}</span>
+		</button>
+	);
 }
 
 function emptyOverview() {
@@ -244,6 +263,33 @@ export default function App() {
 		[overview.balances],
 	);
 
+	// O(1) name lookups, used everywhere a payer/debtor id needs a display name
+	const personMap = useMemo(
+		() => new Map(persons.map((p) => [p.id, p.name])),
+		[persons],
+	);
+
+	// Live "who pays what" readout for the group-split form, so people can
+	// see the per-person amount before they commit to the expense.
+	const groupPreview = useMemo(() => {
+		if (!amount || selectedParticipants.length === 0) return [];
+		try {
+			const totalCents = toCents(amount);
+			if (!totalCents || totalCents <= 0) return [];
+			const parts = evenSplitCents(
+				totalCents,
+				selectedParticipants.length,
+			);
+			return selectedParticipants.map((pid, index) => ({
+				id: pid,
+				name: personMap.get(pid) ?? "未知",
+				amount: fromCents(parts[index]),
+			}));
+		} catch {
+			return [];
+		}
+	}, [amount, selectedParticipants, personMap]);
+
 	return (
 		<div className="app-container">
 			<header className="page-header">
@@ -269,6 +315,8 @@ export default function App() {
 				</button>
 			</header>
 
+			<div className="ledger-divider" aria-hidden="true" />
+
 			<section className="dashboard-grid">
 				{loading && persons.length === 0 ? (
 					<div className="dashboard-card is-loading">載入中…</div>
@@ -292,18 +340,26 @@ export default function App() {
 							>
 								<div className="balance-wrapper">
 									<Avatar name={b.name} />
-									<div className="balance-details">
-										<p className="person-name">{b.name}</p>
-										<p
-											className={`balance-amount ${statusClass}`}
-										>
-											{owed
-												? `應收 ${formatMoney(b.amount)}`
-												: owes
-													? `應付 ${formatMoney(-b.amount)}`
-													: "已結清"}
-										</p>
-									</div>
+									<span className="person-name">
+										{b.name}
+									</span>
+									<span
+										className="ledger-leader"
+										aria-hidden="true"
+									/>
+									<span
+										className={`balance-amount ${statusClass}`}
+									>
+										{owed ? (
+											`應收 ${formatMoney(b.amount)}`
+										) : owes ? (
+											`應付 ${formatMoney(-b.amount)}`
+										) : (
+											<span className="settled-stamp">
+												已結清
+											</span>
+										)}
+									</span>
 								</div>
 							</article>
 						);
@@ -399,33 +455,44 @@ export default function App() {
 									onChange={(e) => setDesc(e.target.value)}
 									className="form-input"
 								/>
-								<input
-									type="number"
-									min="0"
-									step="0.01"
-									placeholder="總金額"
-									value={amount}
-									onChange={(e) => setAmount(e.target.value)}
-									className="form-input"
-								/>
-								<label className="form-field">
+								<div className="amount-field">
+									<span
+										className="amount-prefix"
+										aria-hidden="true"
+									>
+										$
+									</span>
+									<input
+										type="number"
+										min="0"
+										step="0.01"
+										placeholder="總金額"
+										value={amount}
+										onChange={(e) =>
+											setAmount(e.target.value)
+										}
+										className="form-input amount-input"
+									/>
+								</div>
+								<div className="chip-field">
 									<span className="field-label">
 										誰先付錢
 									</span>
-									<select
-										value={payerId}
-										onChange={(e) =>
-											setPayerId(e.target.value)
-										}
-										className="form-input"
-									>
+									<div className="participant-selector">
 										{persons.map((p) => (
-											<option key={p.id} value={p.id}>
-												{p.name}
-											</option>
+											<PersonChip
+												key={p.id}
+												person={p}
+												selected={
+													String(p.id) === payerId
+												}
+												onClick={() =>
+													setPayerId(String(p.id))
+												}
+											/>
 										))}
-									</select>
-								</label>
+									</div>
+								</div>
 								<div className="form-field">
 									<div className="field-header">
 										<span className="field-label">
@@ -444,25 +511,42 @@ export default function App() {
 										</button>
 									</div>
 									<div className="participant-selector">
-										{persons.map((p) => {
-											const on =
-												selectedParticipants.includes(
+										{persons.map((p) => (
+											<PersonChip
+												key={p.id}
+												person={p}
+												selected={selectedParticipants.includes(
 													p.id,
-												);
-											return (
-												<button
-													type="button"
-													key={p.id}
-													onClick={() =>
-														toggleParticipant(p.id)
-													}
-													className={`selector-chip ${on ? "is-selected" : ""}`}
-												>
-													{p.name}
-												</button>
-											);
-										})}
+												)}
+												onClick={() =>
+													toggleParticipant(p.id)
+												}
+											/>
+										))}
 									</div>
+									{groupPreview.length > 0 && (
+										<ul className="split-preview">
+											{groupPreview.map((item) => (
+												<li
+													key={item.id}
+													className="split-preview-row"
+												>
+													<span className="split-preview-name">
+														{item.name}
+													</span>
+													<span
+														className="ledger-leader"
+														aria-hidden="true"
+													/>
+													<span className="split-preview-amount">
+														{formatMoney(
+															item.amount,
+														)}
+													</span>
+												</li>
+											))}
+										</ul>
+									)}
 								</div>
 								<button
 									type="submit"
@@ -486,51 +570,73 @@ export default function App() {
 									}
 									className="form-input"
 								/>
-								<input
-									type="number"
-									min="0"
-									step="0.01"
-									placeholder="代墊金額"
-									value={directAmount}
-									onChange={(e) =>
-										setDirectAmount(e.target.value)
-									}
-									className="form-input"
-								/>
-								<label className="form-field">
+								<div className="amount-field">
+									<span
+										className="amount-prefix"
+										aria-hidden="true"
+									>
+										$
+									</span>
+									<input
+										type="number"
+										min="0"
+										step="0.01"
+										placeholder="代墊金額"
+										value={directAmount}
+										onChange={(e) =>
+											setDirectAmount(e.target.value)
+										}
+										className="form-input amount-input"
+									/>
+								</div>
+								<div className="chip-field">
 									<span className="field-label">誰出錢</span>
-									<select
-										value={directPayerId}
-										onChange={(e) =>
-											setDirectPayerId(e.target.value)
-										}
-										className="form-input"
-									>
-										<option value="">請選擇</option>
+									<div className="participant-selector">
 										{persons.map((p) => (
-											<option key={p.id} value={p.id}>
-												{p.name}
-											</option>
+											<PersonChip
+												key={p.id}
+												person={p}
+												selected={
+													String(p.id) ===
+													directPayerId
+												}
+												disabled={
+													String(p.id) ===
+													directDebtorId
+												}
+												onClick={() =>
+													setDirectPayerId(
+														String(p.id),
+													)
+												}
+											/>
 										))}
-									</select>
-								</label>
-								<label className="form-field">
+									</div>
+								</div>
+								<div className="chip-field">
 									<span className="field-label">幫誰出</span>
-									<select
-										value={directDebtorId}
-										onChange={(e) =>
-											setDirectDebtorId(e.target.value)
-										}
-										className="form-input"
-									>
-										<option value="">請選擇</option>
+									<div className="participant-selector">
 										{persons.map((p) => (
-											<option key={p.id} value={p.id}>
-												{p.name}
-											</option>
+											<PersonChip
+												key={p.id}
+												person={p}
+												selected={
+													String(p.id) ===
+													directDebtorId
+												}
+												disabled={
+													String(p.id) ===
+													directPayerId
+												}
+												onClick={() =>
+													setDirectDebtorId(
+														String(p.id),
+													)
+												}
+											/>
 										))}
-									</select>
-								</label>
+									</div>
+								</div>
 								<button
 									type="submit"
 									disabled={busy || persons.length < 2}
@@ -596,6 +702,10 @@ export default function App() {
 												{s.to_person}
 											</span>
 										</div>
+										<span
+											className="ledger-leader"
+											aria-hidden="true"
+										/>
 										<span className="route-amount">
 											{formatMoney(s.amount)}
 										</span>
@@ -622,9 +732,7 @@ export default function App() {
 												exp.total_amount,
 										) < 0.005;
 									const payer =
-										persons.find(
-											(p) => p.id === exp.payer_id,
-										)?.name ?? "未知";
+										personMap.get(exp.payer_id) ?? "未知";
 									return (
 										<li
 											key={exp.id}
@@ -638,14 +746,10 @@ export default function App() {
 													{isDirectDebt ? (
 														<p className="entry-subtitle">
 															{payer} 幫{" "}
-															{persons.find(
-																(p) =>
-																	p.id ===
-																	exp
-																		.splits[0]
-																		.person_id,
-															)?.name ??
-																"未知"}{" "}
+															{personMap.get(
+																exp.splits[0]
+																	.person_id,
+															) ?? "未知"}{" "}
 															代墊{" "}
 															{formatMoney(
 																exp.total_amount,
@@ -685,11 +789,9 @@ export default function App() {
 															s.person_id ===
 															exp.payer_id;
 														const name =
-															persons.find(
-																(p) =>
-																	p.id ===
-																	s.person_id,
-															)?.name ?? "未知";
+															personMap.get(
+																s.person_id,
+															) ?? "未知";
 														return (
 															<span
 																key={s.id}
