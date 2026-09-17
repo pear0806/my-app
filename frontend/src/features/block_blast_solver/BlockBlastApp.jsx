@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
+import { ArrowLeft } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { useBlockBlast } from "./useBlockBlast";
 import "./App.css";
-
-const API_URL = "http://localhost:8000";
+import "../../App.css";
 
 const MiniBlock = ({ matrix }) => (
 	<div
@@ -19,131 +20,30 @@ const MiniBlock = ({ matrix }) => (
 	</div>
 );
 
-function App() {
-	const emptyBoard = Array(8)
-		.fill()
-		.map(() => Array(8).fill(0));
-	const [board, setBoard] = useState(emptyBoard);
-	const [availableBlocks, setAvailableBlocks] = useState([]);
-
-	const [selectedBlocks, setSelectedBlocks] = useState([1, 1, 1]);
-	const [activeSlot, setActiveSlot] = useState(null);
-	const [solution, setSolution] = useState(null);
-	const [loading, setLoading] = useState(false);
-
-	const [isDragging, setIsDragging] = useState(false);
-	const [dragAction, setDragAction] = useState(null);
-
-	useEffect(() => {
-		fetch(`${API_URL}/api/blast/blocks`)
-			.then((res) => res.json())
-			.then((data) => setAvailableBlocks(data))
-			.catch((err) => console.error("獲取方塊失敗", err));
-	}, []);
-
-	useEffect(() => {
-		const handleGlobalMouseUp = () => {
-			setIsDragging(false);
-			setDragAction(null);
-		};
-		window.addEventListener("mouseup", handleGlobalMouseUp);
-		return () => window.removeEventListener("mouseup", handleGlobalMouseUp);
-	}, []);
-
-	const updateCell = (r, c, newValue) => {
-		setBoard((prev) => {
-			const newBoard = prev.map((row) => [...row]);
-			newBoard[r][c] = newValue;
-			return newBoard;
-		});
-		setSolution(null);
-	};
-
-	const handleMouseDown = (r, c) => {
-		const targetValue = board[r][c] === 0 ? 1 : 0;
-		setIsDragging(true);
-		setDragAction(targetValue);
-		updateCell(r, c, targetValue);
-	};
-
-	const handleMouseEnter = (r, c) => {
-		if (isDragging && dragAction !== null) {
-			if (board[r][c] !== dragAction) {
-				updateCell(r, c, dragAction);
-			}
-		}
-	};
-
-	const handlePickBlock = (blockId) => {
-		if (activeSlot === null) return;
-		const newSelected = [...selectedBlocks];
-		newSelected[activeSlot] = blockId;
-		setSelectedBlocks(newSelected);
-		setActiveSlot(activeSlot < 2 ? activeSlot + 1 : null);
-	};
-
-	const handleSolve = async () => {
-		setLoading(true);
-		setActiveSlot(null);
-		try {
-			const response = await fetch(`${API_URL}/api/blast/solve`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					board: board,
-					block_ids: selectedBlocks,
-				}),
-			});
-			if (!response.ok) throw new Error("伺服器發生錯誤");
-			const data = await response.json();
-			setSolution(data);
-		} catch (err) {
-			alert(`計算失敗，請檢查後端是否啟動。錯誤:${err}`);
-		} finally {
-			setLoading(false);
-		}
-	};
-
-	const clearBoard = () => {
-		setBoard(emptyBoard);
-		setSolution(null);
-	};
-
-	const getSolutionOverlay = () => {
-		const overlay = Array(8)
-			.fill()
-			.map(() => Array(8).fill([]));
-		if (!solution || solution.status !== "success" || !solution.steps)
-			return overlay;
-
-		solution.steps.forEach((step, stepIndex) => {
-			if (step.position === "GAME OVER") return;
-			const block = availableBlocks.find((b) => b.id === step.block_id);
-			if (!block) return;
-
-			const { row, col } = step.position;
-			block.matrix.forEach((rArr, i) => {
-				rArr.forEach((val, j) => {
-					if (val === 1) {
-						const boardRow = row + i;
-						const boardCol = col + j;
-						if (boardRow < 8 && boardCol < 8) {
-							overlay[boardRow][boardCol] = [
-								...overlay[boardRow][boardCol],
-								stepIndex + 1,
-							];
-						}
-					}
-				});
-			});
-		});
-		return overlay;
-	};
-
-	const overlay = getSolutionOverlay();
+export default function App() {
+	const navigate = useNavigate();
+	const {
+		board,
+		availableBlocks,
+		selectedBlocks,
+		activeSlot,
+		solution,
+		loading,
+		overlay,
+		setActiveSlot,
+		handleMouseDown,
+		handleMouseEnter,
+		handlePickBlock,
+		handleSolve,
+		clearBoard,
+	} = useBlockBlast();
 
 	return (
 		<div className="app-container">
+			<button onClick={() => navigate("/")} className="btn-back">
+				<ArrowLeft size={20} />
+				返回首頁
+			</button>
 			<h2>Block Blast 助手</h2>
 			<p style={{ color: "#aaa", marginBottom: "20px" }}>
 				點擊或<b>按住拖曳</b>
@@ -246,5 +146,3 @@ function App() {
 		</div>
 	);
 }
-
-export default App;

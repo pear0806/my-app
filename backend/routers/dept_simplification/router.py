@@ -1,5 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, APIRouter
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Depends, HTTPException, APIRouter
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import IntegrityError
 

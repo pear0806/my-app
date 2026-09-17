@@ -1,47 +1,38 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+	AlertTriangle,
+	ArrowLeft,
 	ArrowRight,
 	Check,
 	Copy,
 	Plus,
+	Receipt,
+	RefreshCw,
+	Sparkles,
 	Trash2,
 	Users,
 	Wallet,
-	RefreshCw,
-	Sparkles,
-	AlertTriangle,
-	Receipt,
 } from "lucide-react";
-import {
-	createExpense,
-	createPerson,
-	deleteExpense,
-	deletePerson,
-	fetchOverview,
-	resetAll,
-} from "./api";
-import {
-	evenSplitCents,
-	formatMoney,
-	fromCents,
-	initials,
-	toCents,
-} from "./money";
-
+import { useNavigate } from "react-router-dom";
+import { formatMoney, initials } from "./money";
+import { useDept } from "./useDept";
 import "./App.css";
+import "../../App.css";
 
 function Toast({ toast, onClose }) {
 	if (!toast) return null;
 	const isError = toast.type === "error";
-	const Icon = isError ? AlertTriangle : Check;
 	return (
-		<div className="toast">
+		<div
+			className={`toast-container ${isError ? "toast-error" : "toast-success"}`}
+		>
 			<div className="toast-content">
-				<Icon
-					className={`toast-icon ${isError ? "is-error" : "is-success"}`}
-				/>
+				<div className="toast-indicator" />
 				<p className="toast-message">{toast.message}</p>
-				<button type="button" onClick={onClose} className="toast-close">
+				<button
+					type="button"
+					onClick={onClose}
+					className="toast-close-btn"
+				>
 					關閉
 				</button>
 			</div>
@@ -53,249 +44,60 @@ function Avatar({ name }) {
 	return <span className="avatar">{initials(name)}</span>;
 }
 
-// A tappable "who" chip — reused for participants, and for choosing a
-// payer / debtor instead of a native <select>, so every person-picking
-// interaction in the app looks and behaves the same way.
-function PersonChip({ person, selected, disabled, onClick }) {
-	return (
-		<button
-			type="button"
-			onClick={onClick}
-			disabled={disabled}
-			aria-pressed={selected}
-			className={`selector-chip ${selected ? "is-selected" : ""}`}
-		>
-			<Avatar name={person.name} />
-			<span>{person.name}</span>
-		</button>
-	);
-}
-
-function emptyOverview() {
-	return {
-		persons: [],
-		expenses: [],
-		balances: [],
-		settlements: [],
-		original_edges: 0,
-		simplified_count: 0,
-	};
-}
-
 export default function App() {
-	const [overview, setOverview] = useState(emptyOverview);
-	const [loading, setLoading] = useState(true);
-	const [busy, setBusy] = useState(false);
-	const [toast, setToast] = useState(null);
-	const [tab, setTab] = useState("split");
-
-	const [newPersonName, setNewPersonName] = useState("");
-	const [desc, setDesc] = useState("");
-	const [amount, setAmount] = useState("");
-	const [payerId, setPayerId] = useState("");
-	const [selectedParticipants, setSelectedParticipants] = useState([]);
-
-	const [directDesc, setDirectDesc] = useState("");
-	const [directAmount, setDirectAmount] = useState("");
-	const [directPayerId, setDirectPayerId] = useState("");
-	const [directDebtorId, setDirectDebtorId] = useState("");
-
-	const [copied, setCopied] = useState(false);
-
-	const persons = overview.persons;
-	const notify = useCallback((message, type = "ok") => {
-		setToast({ message, type });
-	}, []);
-
-	useEffect(() => {
-		if (!toast) return undefined;
-		const id = window.setTimeout(() => setToast(null), 3200);
-		return () => window.clearTimeout(id);
-	}, [toast]);
-
-	const load = useCallback(async () => {
-		const data = await fetchOverview();
-		setOverview(data);
-		setPayerId((current) => current || String(data.persons[0]?.id ?? ""));
-		setDirectPayerId(
-			(current) => current || String(data.persons[0]?.id ?? ""),
-		);
-		setSelectedParticipants((current) => {
-			if (current.length > 0) {
-				return current.filter((id) =>
-					data.persons.some((p) => p.id === id),
-				);
-			}
-			return data.persons.map((p) => p.id);
-		});
-	}, []);
-
-	useEffect(() => {
-		load()
-			.catch((err) => notify(err.message || "無法連線後端", "error"))
-			.finally(() => setLoading(false));
-	}, [load, notify]);
-
-	const run = async (fn, successMessage) => {
-		setBusy(true);
-		try {
-			await fn();
-			await load();
-			if (successMessage) notify(successMessage);
-		} catch (err) {
-			notify(err.message || "操作失敗", "error");
-		} finally {
-			setBusy(false);
-		}
-	};
-
-	const handleAddPerson = (e) => {
-		e.preventDefault();
-		const name = newPersonName.trim();
-		if (!name) return;
-		run(async () => {
-			await createPerson(name);
-			setNewPersonName("");
-		}, `已加入 ${name}`);
-	};
-
-	const toggleParticipant = (id) => {
-		setSelectedParticipants((current) =>
-			current.includes(id)
-				? current.filter((p) => p !== id)
-				: [...current, id],
-		);
-	};
-
-	const handleAddGroupExpense = (e) => {
-		e.preventDefault();
-		if (
-			!desc.trim() ||
-			!amount ||
-			!payerId ||
-			selectedParticipants.length === 0
-		) {
-			notify("請填寫用途、金額，並至少選擇一位分攤人", "error");
-			return;
-		}
-		const totalCents = toCents(amount);
-		if (totalCents <= 0) {
-			notify("金額必須大於 0", "error");
-			return;
-		}
-		const parts = evenSplitCents(totalCents, selectedParticipants.length);
-		const splits = selectedParticipants.map((pid, index) => ({
-			person_id: pid,
-			amount: fromCents(parts[index]),
-		}));
-		run(async () => {
-			await createExpense({
-				description: desc.trim(),
-				total_amount: fromCents(totalCents),
-				payer_id: Number(payerId),
-				splits,
-			});
-			setDesc("");
-			setAmount("");
-		}, "已記錄群組花費");
-	};
-
-	const handleAddDirectDebt = (e) => {
-		e.preventDefault();
-		if (!directAmount || !directPayerId || !directDebtorId) {
-			notify("請選擇雙方並填寫金額", "error");
-			return;
-		}
-		if (directPayerId === directDebtorId) {
-			notify("出錢人與被代墊人不能相同", "error");
-			return;
-		}
-		const totalCents = toCents(directAmount);
-		if (totalCents <= 0) {
-			notify("金額必須大於 0", "error");
-			return;
-		}
-		run(async () => {
-			await createExpense({
-				description: directDesc.trim() || "指定代墊",
-				total_amount: fromCents(totalCents),
-				payer_id: Number(directPayerId),
-				splits: [
-					{
-						person_id: Number(directDebtorId),
-						amount: fromCents(totalCents),
-					},
-				],
-			});
-			setDirectDesc("");
-			setDirectAmount("");
-			setDirectDebtorId("");
-		}, "已記錄代墊");
-	};
-
-	const copySettlements = async () => {
-		if (overview.settlements.length === 0) return;
-		const text = overview.settlements
-			.map(
-				(s) =>
-					`${s.from_person} → ${s.to_person} ${formatMoney(s.amount)}`,
-			)
-			.join("\n");
-		await navigator.clipboard.writeText(text);
-		setCopied(true);
-		window.setTimeout(() => setCopied(false), 1600);
-	};
-
-	const savedCount = Math.max(
-		overview.original_edges - overview.simplified_count,
-		0,
-	);
-	const settledEveryone =
-		persons.length > 0 &&
-		overview.settlements.length === 0 &&
-		overview.expenses.length > 0;
-
-	const sortedBalances = useMemo(
-		() =>
-			[...overview.balances].sort(
-				(a, b) => Math.abs(b.amount) - Math.abs(a.amount),
-			),
-		[overview.balances],
-	);
-
-	// O(1) name lookups, used everywhere a payer/debtor id needs a display name
-	const personMap = useMemo(
-		() => new Map(persons.map((p) => [p.id, p.name])),
-		[persons],
-	);
-
-	// Live "who pays what" readout for the group-split form, so people can
-	// see the per-person amount before they commit to the expense.
-	const groupPreview = useMemo(() => {
-		if (!amount || selectedParticipants.length === 0) return [];
-		try {
-			const totalCents = toCents(amount);
-			if (!totalCents || totalCents <= 0) return [];
-			const parts = evenSplitCents(
-				totalCents,
-				selectedParticipants.length,
-			);
-			return selectedParticipants.map((pid, index) => ({
-				id: pid,
-				name: personMap.get(pid) ?? "未知",
-				amount: fromCents(parts[index]),
-			}));
-		} catch {
-			return [];
-		}
-	}, [amount, selectedParticipants, personMap]);
+	const navigate = useNavigate();
+	const {
+		overview,
+		loading,
+		busy,
+		toast,
+		setToast,
+		tab,
+		setTab,
+		newPersonName,
+		setNewPersonName,
+		desc,
+		setDesc,
+		amount,
+		setAmount,
+		payerId,
+		setPayerId,
+		selectedParticipants,
+		setSelectedParticipants,
+		directDesc,
+		setDirectDesc,
+		directAmount,
+		setDirectAmount,
+		directPayerId,
+		setDirectPayerId,
+		directDebtorId,
+		setDirectDebtorId,
+		copied,
+		persons,
+		sortedBalances,
+		savedCount,
+		settledEveryone,
+		handleAddPerson,
+		toggleParticipant,
+		handleAddGroupExpense,
+		handleAddDirectDebt,
+		copySettlements,
+		run,
+		deletePerson,
+		deleteExpense,
+		resetAll,
+		load,
+	} = useDept();
 
 	return (
 		<div className="app-container">
-			<header className="page-header">
-				<div className="header-intro">
-					<p className="feature-badge">
-						<Sparkles className="badge-icon" />
+			<header className="app-header">
+				<button onClick={() => navigate(`/`)} className="btn-back">
+					<ArrowLeft size={20}></ArrowLeft>
+				</button>
+				<div className="header-titles">
+					<p className="badge">
+						<Sparkles />
 						最少轉帳結算
 					</p>
 					<h1 className="page-title">分帳與債務簡化</h1>
@@ -308,58 +110,38 @@ export default function App() {
 					onClick={() => run(load)}
 					className="btn-refresh"
 				>
-					<RefreshCw
-						className={`refresh-icon ${loading || busy ? "is-spinning" : ""}`}
-					/>
+					<RefreshCw className={loading || busy ? "icon-spin" : ""} />
 					重新整理
 				</button>
 			</header>
 
-			<div className="ledger-divider" aria-hidden="true" />
-
-			<section className="dashboard-grid">
+			<section className="balances-section">
 				{loading && persons.length === 0 ? (
-					<div className="dashboard-card is-loading">載入中…</div>
+					<div className="message-box">載入中…</div>
 				) : persons.length === 0 ? (
-					<div className="dashboard-card is-empty">
+					<div className="message-box border-dashed">
 						先加入成員，餘額看板就會出現在這裡。
 					</div>
 				) : (
 					sortedBalances.map((b) => {
 						const owed = b.amount > 0.005;
 						const owes = b.amount < -0.005;
-						const statusClass = owed
-							? "is-owed"
-							: owes
-								? "is-debt"
-								: "is-settled";
 						return (
-							<article
-								key={b.person_id}
-								className="person-balance-card"
-							>
-								<div className="balance-wrapper">
+							<article key={b.person_id} className="balance-card">
+								<div className="balance-card-content">
 									<Avatar name={b.name} />
-									<span className="person-name">
-										{b.name}
-									</span>
-									<span
-										className="ledger-leader"
-										aria-hidden="true"
-									/>
-									<span
-										className={`balance-amount ${statusClass}`}
-									>
-										{owed ? (
-											`應收 ${formatMoney(b.amount)}`
-										) : owes ? (
-											`應付 ${formatMoney(-b.amount)}`
-										) : (
-											<span className="settled-stamp">
-												已結清
-											</span>
-										)}
-									</span>
+									<div className="balance-info">
+										<p className="person-name">{b.name}</p>
+										<p
+											className={`balance-amount ${owed ? "text-positive" : owes ? "text-negative" : "text-neutral"}`}
+										>
+											{owed
+												? `應收 ${formatMoney(b.amount)}`
+												: owes
+													? `應付 ${formatMoney(-b.amount)}`
+													: "已結清"}
+										</p>
+									</div>
 								</div>
 							</article>
 						);
@@ -367,11 +149,11 @@ export default function App() {
 				)}
 			</section>
 
-			<div className="content-layout">
-				<div className="layout-column">
-					<section className="module-card">
-						<div className="module-header">
-							<Users className="module-icon" />
+			<div className="main-layout-grid">
+				<div className="left-column">
+					<section className="panel-card">
+						<div className="panel-header">
+							<Users />
 							<h2>成員</h2>
 						</div>
 						<form
@@ -385,24 +167,21 @@ export default function App() {
 								onChange={(e) =>
 									setNewPersonName(e.target.value)
 								}
-								className="form-input"
+								className="input-field"
 							/>
 							<button
 								type="submit"
 								disabled={busy || !newPersonName.trim()}
 								className="btn-primary"
 							>
-								<Plus className="btn-icon" />
-								新增
+								<Plus /> 新增
 							</button>
 						</form>
-						<ul className="member-list">
+						<ul className="participant-list">
 							{persons.map((p) => (
-								<li key={p.id} className="member-item">
+								<li key={p.id} className="participant-item">
 									<Avatar name={p.name} />
-									<span className="member-name">
-										{p.name}
-									</span>
+									<span>{p.name}</span>
 									<button
 										type="button"
 										title="刪除成員"
@@ -412,7 +191,7 @@ export default function App() {
 												`已移除 ${p.name}`,
 											)
 										}
-										className="btn-delete"
+										className="btn-icon-danger"
 									>
 										<Trash2 />
 									</button>
@@ -421,23 +200,23 @@ export default function App() {
 						</ul>
 					</section>
 
-					<section className="module-card">
-						<div className="module-header">
-							<Wallet className="module-icon" />
+					<section className="panel-card">
+						<div className="panel-header">
+							<Wallet />
 							<h2>記一筆</h2>
 						</div>
-						<div className="transaction-tabs">
+						<div className="tab-container">
 							<button
 								type="button"
 								onClick={() => setTab("split")}
-								className={`tab-item ${tab === "split" ? "is-active" : ""}`}
+								className={`tab-btn ${tab === "split" ? "active" : ""}`}
 							>
 								群組平分
 							</button>
 							<button
 								type="button"
 								onClick={() => setTab("direct")}
-								className={`tab-item ${tab === "direct" ? "is-active" : ""}`}
+								className={`tab-btn ${tab === "direct" ? "active" : ""}`}
 							>
 								一對一代墊
 							</button>
@@ -453,51 +232,38 @@ export default function App() {
 									placeholder="用途，例如晚餐"
 									value={desc}
 									onChange={(e) => setDesc(e.target.value)}
-									className="form-input"
+									className="input-field"
 								/>
-								<div className="amount-field">
-									<span
-										className="amount-prefix"
-										aria-hidden="true"
-									>
-										$
-									</span>
-									<input
-										type="number"
-										min="0"
-										step="0.01"
-										placeholder="總金額"
-										value={amount}
+								<input
+									type="number"
+									min="0"
+									step="0.01"
+									placeholder="總金額"
+									value={amount}
+									onChange={(e) => setAmount(e.target.value)}
+									className="input-field"
+								/>
+
+								<label className="form-label">
+									誰先付錢
+									<select
+										value={payerId}
 										onChange={(e) =>
-											setAmount(e.target.value)
+											setPayerId(e.target.value)
 										}
-										className="form-input amount-input"
-									/>
-								</div>
-								<div className="chip-field">
-									<span className="field-label">
-										誰先付錢
-									</span>
-									<div className="participant-selector">
+										className="select-field"
+									>
 										{persons.map((p) => (
-											<PersonChip
-												key={p.id}
-												person={p}
-												selected={
-													String(p.id) === payerId
-												}
-												onClick={() =>
-													setPayerId(String(p.id))
-												}
-											/>
+											<option key={p.id} value={p.id}>
+												{p.name}
+											</option>
 										))}
-									</div>
-								</div>
-								<div className="form-field">
-									<div className="field-header">
-										<span className="field-label">
-											誰要分攤（自動平分到分）
-										</span>
+									</select>
+								</label>
+
+								<div className="split-participants-section">
+									<div className="split-header">
+										<span>誰要分攤（自動平分到分）</span>
 										<button
 											type="button"
 											onClick={() =>
@@ -505,53 +271,36 @@ export default function App() {
 													persons.map((p) => p.id),
 												)
 											}
-											className="btn-text"
+											className="btn-link"
 										>
 											全選
 										</button>
 									</div>
-									<div className="participant-selector">
-										{persons.map((p) => (
-											<PersonChip
-												key={p.id}
-												person={p}
-												selected={selectedParticipants.includes(
+									<div className="split-buttons">
+										{persons.map((p) => {
+											const on =
+												selectedParticipants.includes(
 													p.id,
-												)}
-												onClick={() =>
-													toggleParticipant(p.id)
-												}
-											/>
-										))}
-									</div>
-									{groupPreview.length > 0 && (
-										<ul className="split-preview">
-											{groupPreview.map((item) => (
-												<li
-													key={item.id}
-													className="split-preview-row"
+												);
+											return (
+												<button
+													type="button"
+													key={p.id}
+													onClick={() =>
+														toggleParticipant(p.id)
+													}
+													className={`participant-toggle-btn ${on ? "selected" : ""}`}
 												>
-													<span className="split-preview-name">
-														{item.name}
-													</span>
-													<span
-														className="ledger-leader"
-														aria-hidden="true"
-													/>
-													<span className="split-preview-amount">
-														{formatMoney(
-															item.amount,
-														)}
-													</span>
-												</li>
-											))}
-										</ul>
-									)}
+													{p.name}
+												</button>
+											);
+										})}
+									</div>
 								</div>
 								<button
 									type="submit"
 									disabled={busy || persons.length === 0}
-									className="btn-submit"
+									className="btn-submit-green"
 								>
 									記錄群組花費
 								</button>
@@ -559,7 +308,7 @@ export default function App() {
 						) : (
 							<form
 								onSubmit={handleAddDirectDebt}
-								className="expense-form is-direct-mode"
+								className="expense-form"
 							>
 								<input
 									type="text"
@@ -568,79 +317,59 @@ export default function App() {
 									onChange={(e) =>
 										setDirectDesc(e.target.value)
 									}
-									className="form-input"
+									className="input-field"
 								/>
-								<div className="amount-field">
-									<span
-										className="amount-prefix"
-										aria-hidden="true"
-									>
-										$
-									</span>
-									<input
-										type="number"
-										min="0"
-										step="0.01"
-										placeholder="代墊金額"
-										value={directAmount}
+								<input
+									type="number"
+									min="0"
+									step="0.01"
+									placeholder="代墊金額"
+									value={directAmount}
+									onChange={(e) =>
+										setDirectAmount(e.target.value)
+									}
+									className="input-field"
+								/>
+
+								<label className="form-label">
+									誰出錢
+									<select
+										value={directPayerId}
 										onChange={(e) =>
-											setDirectAmount(e.target.value)
+											setDirectPayerId(e.target.value)
 										}
-										className="form-input amount-input"
-									/>
-								</div>
-								<div className="chip-field">
-									<span className="field-label">誰出錢</span>
-									<div className="participant-selector">
+										className="select-field"
+									>
+										<option value="">請選擇</option>
 										{persons.map((p) => (
-											<PersonChip
-												key={p.id}
-												person={p}
-												selected={
-													String(p.id) ===
-													directPayerId
-												}
-												disabled={
-													String(p.id) ===
-													directDebtorId
-												}
-												onClick={() =>
-													setDirectPayerId(
-														String(p.id),
-													)
-												}
-											/>
+											<option key={p.id} value={p.id}>
+												{p.name}
+											</option>
 										))}
-									</div>
-								</div>
-								<div className="chip-field">
-									<span className="field-label">幫誰出</span>
-									<div className="participant-selector">
+									</select>
+								</label>
+
+								<label className="form-label">
+									幫誰出
+									<select
+										value={directDebtorId}
+										onChange={(e) =>
+											setDirectDebtorId(e.target.value)
+										}
+										className="select-field"
+									>
+										<option value="">請選擇</option>
 										{persons.map((p) => (
-											<PersonChip
-												key={p.id}
-												person={p}
-												selected={
-													String(p.id) ===
-													directDebtorId
-												}
-												disabled={
-													String(p.id) ===
-													directPayerId
-												}
-												onClick={() =>
-													setDirectDebtorId(
-														String(p.id),
-													)
-												}
-											/>
+											<option key={p.id} value={p.id}>
+												{p.name}
+											</option>
 										))}
-									</div>
-								</div>
+									</select>
+								</label>
 								<button
 									type="submit"
 									disabled={busy || persons.length < 2}
-									className="btn-submit"
+									className="btn-submit-orange"
 								>
 									記錄指定代墊
 								</button>
@@ -649,12 +378,12 @@ export default function App() {
 					</section>
 				</div>
 
-				<div className="layout-column">
-					<section className="module-card is-dark">
-						<div className="dark-header">
-							<div className="dark-titles">
+				<div className="right-column">
+					<section className="panel-card settlement-panel">
+						<div className="settlement-header">
+							<div>
 								<h2>結算方案</h2>
-								<p className="dark-subtitle">
+								<p className="settlement-subtitle">
 									{overview.expenses.length === 0
 										? "還沒有帳務。記一筆之後會自動算出轉帳。"
 										: settledEveryone
@@ -666,47 +395,41 @@ export default function App() {
 								<button
 									type="button"
 									onClick={copySettlements}
-									className="btn-action-ghost"
+									className="btn-copy"
 								>
-									{copied ? (
-										<Check className="action-icon" />
-									) : (
-										<Copy className="action-icon" />
-									)}
+									{copied ? <Check /> : <Copy />}
 									{copied ? "已複製" : "複製"}
 								</button>
 							)}
 						</div>
+
 						{savedCount > 0 && (
-							<p className="summary-alert">
+							<p className="saved-count-alert">
 								少轉 {savedCount} 次，大家對一次就能結清。
 							</p>
 						)}
+
 						{overview.settlements.length === 0 ? (
-							<p className="empty-message">
+							<p className="no-settlement-msg">
 								目前沒有需要轉帳的債務。
 							</p>
 						) : (
-							<ul className="settlement-route-list">
+							<ul className="settlement-list">
 								{overview.settlements.map((s, idx) => (
 									<li
 										key={`${s.from_id}-${s.to_id}-${idx}`}
-										className="route-item"
+										className="settlement-item"
 									>
-										<div className="route-path">
-											<span className="route-person">
+										<div className="settlement-route">
+											<span className="person-name">
 												{s.from_person}
 											</span>
-											<ArrowRight className="route-arrow" />
-											<span className="route-person">
+											<ArrowRight className="icon-arrow" />
+											<span className="person-name">
 												{s.to_person}
 											</span>
 										</div>
-										<span
-											className="ledger-leader"
-											aria-hidden="true"
-										/>
-										<span className="route-amount">
+										<span className="settlement-amount">
 											{formatMoney(s.amount)}
 										</span>
 									</li>
@@ -715,15 +438,15 @@ export default function App() {
 						)}
 					</section>
 
-					<section className="module-card">
-						<div className="module-header">
-							<Receipt className="module-icon" />
+					<section className="panel-card">
+						<div className="panel-header">
+							<Receipt />
 							<h2>歷史明細</h2>
 						</div>
 						{overview.expenses.length === 0 ? (
-							<p className="empty-message">目前尚無任何紀錄</p>
+							<p className="empty-msg">目前尚無任何紀錄</p>
 						) : (
-							<ul className="history-timeline">
+							<ul className="history-list">
 								{overview.expenses.map((exp) => {
 									const isDirectDebt =
 										exp.splits.length === 1 &&
@@ -732,31 +455,37 @@ export default function App() {
 												exp.total_amount,
 										) < 0.005;
 									const payer =
-										personMap.get(exp.payer_id) ?? "未知";
+										persons.find(
+											(p) => p.id === exp.payer_id,
+										)?.name ?? "未知";
 									return (
 										<li
 											key={exp.id}
-											className="history-entry"
+											className="history-item"
 										>
-											<div className="entry-header">
-												<div className="entry-info">
-													<p className="entry-title">
+											<div className="history-item-header">
+												<div>
+													<p className="history-desc">
 														{exp.description}
 													</p>
 													{isDirectDebt ? (
-														<p className="entry-subtitle">
+														<p className="history-sub-desc">
 															{payer} 幫{" "}
-															{personMap.get(
-																exp.splits[0]
-																	.person_id,
-															) ?? "未知"}{" "}
+															{persons.find(
+																(p) =>
+																	p.id ===
+																	exp
+																		.splits[0]
+																		.person_id,
+															)?.name ??
+																"未知"}{" "}
 															代墊{" "}
 															{formatMoney(
 																exp.total_amount,
 															)}
 														</p>
 													) : (
-														<p className="entry-subtitle">
+														<p className="history-sub-desc">
 															總額{" "}
 															{formatMoney(
 																exp.total_amount,
@@ -776,26 +505,28 @@ export default function App() {
 															"已刪除這筆記錄",
 														)
 													}
-													className="btn-delete"
+													className="btn-icon-danger"
 													title="刪除這筆"
 												>
 													<Trash2 />
 												</button>
 											</div>
 											{!isDirectDebt && (
-												<div className="entry-splits">
+												<div className="history-splits">
 													{exp.splits.map((s) => {
 														const isPayer =
 															s.person_id ===
 															exp.payer_id;
 														const name =
-															personMap.get(
-																s.person_id,
-															) ?? "未知";
+															persons.find(
+																(p) =>
+																	p.id ===
+																	s.person_id,
+															)?.name ?? "未知";
 														return (
 															<span
 																key={s.id}
-																className={`split-tag ${isPayer ? "is-payer" : "is-debtor"}`}
+																className={`split-tag ${isPayer ? "tag-payer" : "tag-debtor"}`}
 															>
 																{name}{" "}
 																{isPayer
@@ -816,12 +547,12 @@ export default function App() {
 						)}
 					</section>
 
-					<section className="module-card is-danger">
+					<section className="panel-card danger-panel">
 						<div className="danger-header">
-							<AlertTriangle className="module-icon" />
+							<AlertTriangle />
 							<h2>重置這一輪</h2>
 						</div>
-						<p className="danger-description">
+						<p className="danger-desc">
 							結清後若要開始新一輪，會刪除全部成員與帳務，無法復原。
 						</p>
 						<button
@@ -840,14 +571,13 @@ export default function App() {
 									setSelectedParticipants([]);
 								}, "資料已全部重置");
 							}}
-							className="btn-danger"
+							className="btn-danger-full"
 						>
 							清空所有資料
 						</button>
 					</section>
 				</div>
 			</div>
-
 			<Toast toast={toast} onClose={() => setToast(null)} />
 		</div>
 	);
