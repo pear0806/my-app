@@ -1,8 +1,10 @@
-import { ArrowLeft } from "lucide-react";
-import { useNavigate } from "react-router-dom";
-import { useBlockBlast } from "./useBlockBlast";
-import "./App.css";
-import "../../App.css";
+import './App.css';
+import '../../App.css';
+
+import { ArrowLeft } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+
+import { useBlockBlast } from './useBlockBlast';
 
 const MiniBlock = ({ matrix }) => (
 	<div

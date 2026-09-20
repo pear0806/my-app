@@ -1,6 +1,15 @@
 // frontend/src/App.jsx
-import { lazy, Suspense } from "react";
-import { BrowserRouter as Router, Routes, Route, Link } from "react-router-dom";
+import {
+    lazy,
+    Suspense,
+} from 'react';
+
+import {
+    BrowserRouter as Router,
+    Link,
+    Route,
+    Routes,
+} from 'react-router-dom';
 
 // 引入兩個子專案的入口元件
 const BlockBlastApp = lazy(

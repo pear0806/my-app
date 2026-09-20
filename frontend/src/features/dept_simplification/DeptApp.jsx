@@ -1,22 +1,27 @@
+import '../../App.css';
+import './App.css';
+
 import {
-	AlertTriangle,
-	ArrowLeft,
-	ArrowRight,
-	Check,
-	Copy,
-	Plus,
-	Receipt,
-	RefreshCw,
-	Sparkles,
-	Trash2,
-	Users,
-	Wallet,
-} from "lucide-react";
-import { useNavigate } from "react-router-dom";
-import { formatMoney, initials } from "./money";
-import { useDept } from "./useDept";
-import "./App.css";
-import "../../App.css";
+    AlertTriangle,
+    ArrowLeft,
+    ArrowRight,
+    Check,
+    Copy,
+    Plus,
+    Receipt,
+    RefreshCw,
+    Sparkles,
+    Trash2,
+    Users,
+    Wallet,
+} from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+
+import {
+    formatMoney,
+    initials,
+} from './money';
+import { useDept } from './useDept';
 
 function Toast({ toast, onClose }) {
 	if (!toast) return null;
