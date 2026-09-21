@@ -1,10 +1,12 @@
-from fastapi import FastAPI, HTTPException, APIRouter
+from fastapi import FastAPI, HTTPException, APIRouter, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
 import sqlite3
 import json
 import itertools
+import cv2
+import numpy as np
 
 router = APIRouter()
 
@@ -74,6 +76,17 @@ init_db()
 class SolveRequest(BaseModel):
     board: List[List[int]]  # 8x8 二維陣列
     block_ids: List[int]    # 3個方塊的 ID
+
+
+class CustomBlock(BaseModel):
+    id: str
+    matrix: List[List[int]]
+
+
+class solveRequest(BaseModel):
+    board: List[List[int]]
+    block_ids: List[int]
+    custom_block: List[CustomBlock] = []
 
 # ----------------- 核心演算法 -----------------
 
@@ -148,6 +161,88 @@ def get_all_blocks():
     rows = cursor.fetchall()
     conn.close()
     return [{"id": r[0], "name": r[1], "matrix": json.loads(r[2])} for r in rows]
+
+
+@router.post("/recognize")
+async def recognize_screenshot(file: UploadFile = File(...)):
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="請上傳圖片檔案")
+
+    try:
+        # 1. 讀取上傳的圖片轉為 OpenCV 格式
+        contents = await file.read()
+        nparr = np.frombuffer(contents, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if img is None:
+            raise ValueError("圖片解析失敗")
+
+        # 2. 影像前處理：灰階、模糊、邊緣偵測
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.Canny(blurred, 50, 150)
+
+        # 3. 尋找輪廓，找出最大的正方形 (假設是 8x8 遊戲盤面)
+        contours, _ = cv2.findContours(
+            edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        board_contour = None
+        max_area = 0
+
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area > 10000:  # 過濾掉太小的雜訊
+                peri = cv2.arcLength(cnt, True)
+                approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
+                if len(approx) == 4 and area > max_area:
+                    board_contour = approx
+                    max_area = area
+
+        if board_contour is None:
+            raise HTTPException(
+                status_code=400, detail="找不到遊戲盤面，請確保截圖完整包含 8x8 網格")
+
+        # 4. 視角轉換 (將找到的四邊形拉平為正方形)
+        board_contour = board_contour.reshape((4, 2))
+        rect = np.zeros((4, 2), dtype="float32")
+        s = board_contour.sum(axis=1)
+        rect[0] = board_contour[np.argmin(s)]  # 左上
+        rect[2] = board_contour[np.argmax(s)]  # 右下
+        diff = np.diff(board_contour, axis=1)
+        rect[1] = board_contour[np.argmin(diff)]  # 右上
+        rect[3] = board_contour[np.argmax(diff)]  # 左下
+
+        # 建立一個 800x800 的標準正方形視圖 (每格剛好 100x100)
+        dst = np.array([[0, 0], [800, 0], [800, 800],
+                       [0, 800]], dtype="float32")
+        M = cv2.getPerspectiveTransform(rect, dst)
+        warped = cv2.warpPerspective(img, M, (800, 800))
+
+        # 5. 分析 8x8 網格的顏色狀態
+        board_matrix = [[0 for _ in range(8)] for _ in range(8)]
+        step = 100
+        for r in range(8):
+            for c in range(8):
+                # 擷取單一格子的中心區域 (避開邊框線)
+                cell_roi = warped[r*step +
+                                  20: (r+1)*step - 20, c*step + 20: (c+1)*step - 20]
+
+                # 轉為 HSV 色彩空間來判斷是否為藍色 (填滿) 或深灰色 (空)
+                hsv = cv2.cvtColor(cell_roi, cv2.COLOR_BGR2HSV)
+                # 💡 這裡的 HSV 閾值可能需要根據你的遊戲截圖微調
+                # 假設遊戲方塊是亮藍色：
+                lower_blue = np.array([90, 50, 50])
+                upper_blue = np.array([130, 255, 255])
+                mask = cv2.inRange(hsv, lower_blue, upper_blue)
+
+                # 如果該格子內藍色像素的比例大於 20%，判定為填滿 (1)
+                blue_ratio = cv2.countNonZero(
+                    mask) / (cell_roi.shape[0] * cell_roi.shape[1])
+                if blue_ratio > 0.2:
+                    board_matrix[r][c] = 1
+
+        return {"status": "success", "board": board_matrix}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/solve")

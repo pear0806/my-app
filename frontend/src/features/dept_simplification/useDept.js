@@ -1,13 +1,23 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
 import {
-	fetchOverview,
-	createPerson,
-	deletePerson,
-	createExpense,
-	deleteExpense,
-	resetAll,
-} from "./api";
-import { evenSplitCents, fromCents, toCents } from "./money";
+    useCallback,
+    useEffect,
+    useMemo,
+    useState,
+} from 'react';
+
+import {
+    createExpense,
+    createPerson,
+    deleteExpense,
+    deletePerson,
+    fetchOverview,
+    resetAll,
+} from './api';
+import {
+    evenSplitCents,
+    fromCents,
+    toCents,
+} from './money';
 
 function emptyOverview() {
 	return {
@@ -21,6 +31,9 @@ function emptyOverview() {
 }
 
 export function useDept() {
+	const [currency, setCurrency] = useState("TWD");
+	const [exchangeRate, setExchangeRate] = useState(1);
+	const [isFetchingRate, setIsFetchingRate] = useState(false);
 	const [overview, setOverview] = useState(emptyOverview);
 	const [loading, setLoading] = useState(true);
 	const [busy, setBusy] = useState(false);
@@ -51,6 +64,35 @@ export function useDept() {
 		const id = window.setTimeout(() => setToast(null), 3200);
 		return () => window.clearTimeout(id);
 	}, [toast]);
+
+	useEffect(() => {
+		if (currency === "TWD") {
+			setExchangeRate(1);
+			return;
+		}
+		let isMounted = true;
+		const fetchRate = async () => {
+			setIsFetchingRate(true);
+			try {
+				// 抓取所選外幣的基準匯率
+				const res = await fetch(
+					`https://open.er-api.com/v6/latest/${currency}`,
+				);
+				const data = await res.json();
+				if (isMounted && data.rates && data.rates.TWD) {
+					setExchangeRate(data.rates.TWD);
+				}
+			} catch (err) {
+				console.error("匯率獲取失敗", err);
+			} finally {
+				if (isMounted) setIsFetchingRate(false);
+			}
+		};
+		fetchRate();
+		return () => {
+			isMounted = false;
+		};
+	}, [currency]);
 
 	const load = useCallback(async () => {
 		const data = await fetchOverview();

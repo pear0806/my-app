@@ -1,5 +1,15 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { getBlocks, solveBlockBlast } from "./api";
+import {
+    useCallback,
+    useEffect,
+    useMemo,
+    useState,
+} from 'react';
+
+import {
+    getBlocks,
+    recognizeScreenshot,
+    solveBlockBlast,
+} from './api';
 
 const emptyBoard = Array(8)
 	.fill()
@@ -16,6 +26,30 @@ export function useBlockBlast() {
 
 	const [isDragging, setIsDragging] = useState(false);
 	const [dragAction, setDragAction] = useState(null);
+
+	const handleImageUpload = async (event) => {
+		const file = event.target.files[0];
+		if (!file) return;
+
+		setLoading(true);
+		try {
+			const data = await recognizeScreenshot(file);
+			if (data && data.board) {
+				setBoard(data.board);
+				alert("✅ 截圖辨識成功！盤面已自動更新。");
+			}
+		} catch (err) {
+			const errorMsg =
+				err.response?.data?.detail || err.message || "辨識失敗";
+			alert(
+				`辨識失敗: ${errorMsg}\n請確保截圖清晰且包含完整的 8x8 遊戲網格。`,
+			);
+		} finally {
+			setLoading(false);
+			// 清空 input 讓下次可以重複上傳同一張圖
+			event.target.value = null;
+		}
+	};
 
 	// 取得方塊清單 (加入 isMounted 防護機制)
 	useEffect(() => {
@@ -112,6 +146,15 @@ export function useBlockBlast() {
 		setSolution(null);
 	}, []);
 
+	const fillBoard = useCallback(() => {
+		setBoard(
+			Array(8)
+				.fill()
+				.map(() => Array(8).fill(1)),
+		);
+		setSolution(null);
+	}, []);
+
 	// 將複雜的「解答覆蓋層計算」包裝進 useMemo，避免畫面無謂的重複計算
 	const overlay = useMemo(() => {
 		const tempOverlay = Array(8)
@@ -158,5 +201,7 @@ export function useBlockBlast() {
 		handlePickBlock,
 		handleSolve,
 		clearBoard,
+		fillBoard,
+		handleImageUpload,
 	};
 }

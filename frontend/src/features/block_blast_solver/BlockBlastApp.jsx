@@ -1,7 +1,10 @@
 import './App.css';
 import '../../App.css';
 
-import { ArrowLeft } from 'lucide-react';
+import {
+    ArrowLeft,
+    Camera,
+} from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import { useBlockBlast } from './useBlockBlast';
@@ -38,6 +41,8 @@ export default function App() {
 		handlePickBlock,
 		handleSolve,
 		clearBoard,
+		fillBoard,
+		handleImageUpload,
 	} = useBlockBlast();
 
 	return (
@@ -123,6 +128,19 @@ export default function App() {
 				>
 					{loading ? "計算中..." : "計算最佳解"}
 				</button>
+				<button className="solve-btn fill" onClick={fillBoard}>
+					填滿盤面
+				</button>
+				<label className="solve-btn camera">
+					<Camera size={20} />
+					截圖辨識
+					<input
+						type="file"
+						accept="image/*"
+						onChange={handleImageUpload}
+						style={{ display: "none" }}
+					/>
+				</label>
 				<button className="solve-btn clear" onClick={clearBoard}>
 					清空盤面
 				</button>

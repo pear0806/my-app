@@ -1,4 +1,3 @@
-// frontend/src/App.jsx
 import {
     lazy,
     Suspense,
@@ -11,7 +10,6 @@ import {
     Routes,
 } from 'react-router-dom';
 
-// 引入兩個子專案的入口元件
 const BlockBlastApp = lazy(
 	() => import("./features/block_blast_solver/BlockBlastApp.jsx"),
 );
@@ -63,7 +61,7 @@ const LoadingFallBack = () => {
 export default function App() {
 	return (
 		<Router>
-			<Suspense fallback={LoadingFallBack}>
+			<Suspense fallback={<LoadingFallBack />}>
 				<Routes>
 					<Route path="/" element={<Home />} />
 					<Route path="/blast/*" element={<BlockBlastApp />} />

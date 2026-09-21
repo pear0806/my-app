@@ -13,3 +13,6 @@ starlette
 typing-inspection
 typing_extensions
 uvicorn
+opencv-python-headless
+ numpy
+ python-multipart

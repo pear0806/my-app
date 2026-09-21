@@ -98,7 +98,7 @@ export default function App() {
 		<div className="app-container">
 			<header className="app-header">
 				<button onClick={() => navigate(`/`)} className="btn-back">
-					<ArrowLeft size={20}></ArrowLeft>
+					<ArrowLeft size={20}>返回首頁</ArrowLeft>
 				</button>
 				<div className="header-titles">
 					<p className="badge">

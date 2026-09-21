@@ -41,6 +41,7 @@ body {
 	font-size: 20px;
 	color: white;
 	user-select: none;
+	transition: all 0.3s ease;
 }
 .cell:hover {
 	background-color: #555;
@@ -166,11 +167,40 @@ button.solve-btn:hover {
 }
 
 button.solve-btn.clear {
-	background-color: #dc3545;
+	background-color: #d65966;
 }
 
 button.solve-btn.clear:hover {
 	background-color: #c82333;
+}
+
+button.solve-btn.fill {
+	background-color: #6c757d;
+}
+
+button.solve-btn.fill:hover {
+	background-color: #5a6268;
+}
+
+label.solve-btn.camera {
+	background-color: #8b5cf6;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	cursor: pointer;
+	margin: 0;
+	font-size: 18px;
+	font-weight: bold;
+	color: white;
+	padding: 12px 30px;
+	border-radius: 8px;
+	transition: 0.2s;
+}
+
+label.solve-btn.camera:hover {
+	background-color: #7c3aed;
+	transform: translateY(-2px);
 }
 
 .result {
