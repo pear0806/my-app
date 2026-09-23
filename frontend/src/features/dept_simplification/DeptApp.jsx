@@ -52,6 +52,10 @@ function Avatar({ name }) {
 export default function App() {
 	const navigate = useNavigate();
 	const {
+		currency,
+		setCurrency,
+		exchangeRate,
+		isFetchingRate,
 		overview,
 		loading,
 		busy,
@@ -239,15 +243,50 @@ export default function App() {
 									onChange={(e) => setDesc(e.target.value)}
 									className="input-field"
 								/>
-								<input
-									type="number"
-									min="0"
-									step="0.01"
-									placeholder="總金額"
-									value={amount}
-									onChange={(e) => setAmount(e.target.value)}
-									className="input-field"
-								/>
+								<div style={{ display: "flex", gap: "10px" }}>
+									<select
+										value={currency}
+										onChange={(e) =>
+											setCurrency(e.target.value)
+										}
+										className="select-field"
+										style={{
+											width: "115px",
+											flexShrink: 0,
+										}}
+									>
+										<option value="TWD">台幣 TWD</option>
+										<option value="JPY">日圓 JPY</option>
+										<option value="THB">泰銖 THB</option>
+										<option value="MYR">馬幣 MYR</option>
+										<option value="USD">美金 USD</option>
+									</select>
+									<input
+										type="number"
+										min="0"
+										step="0.01"
+										placeholder="總金額"
+										value={amount}
+										onChange={(e) =>
+											setAmount(e.target.value)
+										}
+										className="input-field"
+									/>
+								</div>
+								{currency !== "TWD" && amount > 0 && (
+									<p
+										style={{
+											fontSize: "0.85rem",
+											color: "#8b5cf6",
+											margin: "-10px 0 15px 5px",
+											fontWeight: "bold",
+										}}
+									>
+										{isFetchingRate
+											? "即時匯率轉換中..."
+											: `≈ NT$ ${Math.round(amount * exchangeRate)} (匯率: ${exchangeRate})`}
+									</p>
+								)}
 
 								<label className="form-label">
 									誰先付錢
@@ -324,18 +363,50 @@ export default function App() {
 									}
 									className="input-field"
 								/>
-								<input
-									type="number"
-									min="0"
-									step="0.01"
-									placeholder="代墊金額"
-									value={directAmount}
-									onChange={(e) =>
-										setDirectAmount(e.target.value)
-									}
-									className="input-field"
-								/>
-
+								<div style={{ display: "flex", gap: "10px" }}>
+									<select
+										value={currency}
+										onChange={(e) =>
+											setCurrency(e.target.value)
+										}
+										className="select-field"
+										style={{
+											width: "115px",
+											flexShrink: 0,
+										}}
+									>
+										<option value="TWD">台幣 TWD</option>
+										<option value="JPY">日圓 JPY</option>
+										<option value="THB">泰銖 THB</option>
+										<option value="MYR">馬幣 MYR</option>
+										<option value="USD">美金 USD</option>
+									</select>
+									<input
+										type="number"
+										min="0"
+										step="0.01"
+										placeholder="代墊金額"
+										value={directAmount}
+										onChange={(e) =>
+											setDirectAmount(e.target.value)
+										}
+										className="input-field"
+									/>
+								</div>
+								{currency !== "TWD" && directAmount > 0 && (
+									<p
+										style={{
+											fontSize: "0.85rem",
+											color: "#8b5cf6",
+											margin: "-10px 0 15px 5px",
+											fontWeight: "bold",
+										}}
+									>
+										{isFetchingRate
+											? "即時匯率轉換中..."
+											: `≈ NT$ ${Math.round(directAmount * exchangeRate)} (匯率: ${exchangeRate})`}
+									</p>
+								)}
 								<label className="form-label">
 									誰出錢
 									<select

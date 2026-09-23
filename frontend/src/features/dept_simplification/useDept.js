@@ -172,16 +172,24 @@ export function useDept() {
 
 	const handleAddGroupExpense = (e) => {
 		e.preventDefault();
-		if (
-			!desc.trim() ||
-			!amount ||
-			!payerId ||
-			selectedParticipants.length === 0
-		) {
-			notify("請填寫用途、金額，並至少選擇一位分攤人", "error");
+		if (!amount || !payerId || selectedParticipants.length === 0) {
+			notify("請填寫金額，並至少選擇一位分攤人", "error");
 			return;
 		}
-		const totalCents = toCents(amount);
+
+		// 💡 1. 攔截並轉換金額與描述
+		const finalAmount =
+			currency === "TWD"
+				? parseFloat(amount)
+				: parseFloat(amount) * exchangeRate;
+
+		const baseDesc = desc.trim() || "群組花費";
+		const finalDesc =
+			currency === "TWD"
+				? baseDesc
+				: `${baseDesc} (原外幣: ${amount} ${currency})`;
+
+		const totalCents = toCents(finalAmount);
 		if (totalCents <= 0) return notify("金額必須大於 0", "error");
 
 		const parts = evenSplitCents(totalCents, selectedParticipants.length);
@@ -192,7 +200,7 @@ export function useDept() {
 
 		run(async () => {
 			await createExpense({
-				description: desc.trim(),
+				description: finalDesc,
 				total_amount: fromCents(totalCents),
 				payer_id: Number(payerId),
 				splits,
@@ -209,12 +217,24 @@ export function useDept() {
 		if (directPayerId === directDebtorId)
 			return notify("出錢人與被代墊人不能相同", "error");
 
-		const totalCents = toCents(directAmount);
+		// 💡 2. 攔截並轉換代墊金額與描述
+		const finalAmount =
+			currency === "TWD"
+				? parseFloat(directAmount)
+				: parseFloat(directAmount) * exchangeRate;
+
+		const baseDesc = directDesc.trim() || "指定代墊";
+		const finalDesc =
+			currency === "TWD"
+				? baseDesc
+				: `${baseDesc} (原外幣: ${directAmount} ${currency})`;
+
+		const totalCents = toCents(finalAmount);
 		if (totalCents <= 0) return notify("金額必須大於 0", "error");
 
 		run(async () => {
 			await createExpense({
-				description: directDesc.trim() || "指定代墊",
+				description: finalDesc, // 帶入轉換後的描述
 				total_amount: fromCents(totalCents),
 				payer_id: Number(directPayerId),
 				splits: [
@@ -256,8 +276,11 @@ export function useDept() {
 		[overview.balances],
 	);
 
-	// 將畫面需要的所有變數與函數「打包」送出去
 	return {
+		currency,
+		setCurrency,
+		exchangeRate,
+		isFetchingRate,
 		overview,
 		loading,
 		busy,
