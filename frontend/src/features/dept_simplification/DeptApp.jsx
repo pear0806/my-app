@@ -1,6 +1,8 @@
 import '../../App.css';
 import './App.css';
+import 'react-swipeable-list/dist/styles.css';
 
+import html2canvas from 'html2canvas';
 import {
     AlertTriangle,
     ArrowLeft,
@@ -97,6 +99,28 @@ export default function App() {
 		resetAll,
 		load,
 	} = useDept();
+
+	const handleExportImage = async () => {
+		const element = document.getElementById("receipt-export");
+		if (!element) return;
+
+		setToast({ message: "📸 正在繪製請款圖卡...", type: "ok" });
+
+		try {
+			const canvas = await html2canvas(element, {
+				backgroundColor: "#2a2a2a",
+				scale: 3,
+			});
+			const dataUrl = canvas.toDataURL("image/png");
+
+			const link = document.createElement("a");
+			link.download = `分帳結算_${new Date().toISOString().slice(0, 10)}.png`;
+			link.href = dataUrl;
+			link.click();
+		} catch (err) {
+			setToast({ message: `圖卡生成失敗，錯誤:${err}`, type: "error" });
+		}
+	};
 
 	return (
 		<div className="app-container">
@@ -468,14 +492,27 @@ export default function App() {
 								</p>
 							</div>
 							{overview.settlements.length > 0 && (
-								<button
-									type="button"
-									onClick={copySettlements}
-									className="btn-copy"
-								>
-									{copied ? <Check /> : <Copy />}
-									{copied ? "已複製" : "複製"}
-								</button>
+								<div className="settlement-actions">
+									<button
+										type="button"
+										onClick={copySettlements}
+										className="btn-copy"
+									>
+										{copied ? (
+											<Check size={16} />
+										) : (
+											<Copy size={16} />
+										)}
+										文字
+									</button>
+									<button
+										type="button"
+										onClick={handleExportImage}
+										className="btn-copy btn-export"
+									>
+										📸 圖卡
+									</button>
+								</div>
 							)}
 						</div>
 
@@ -490,27 +527,40 @@ export default function App() {
 								目前沒有需要轉帳的債務。
 							</p>
 						) : (
-							<ul className="settlement-list">
-								{overview.settlements.map((s, idx) => (
-									<li
-										key={`${s.from_id}-${s.to_id}-${idx}`}
-										className="settlement-item"
-									>
-										<div className="settlement-route">
-											<span className="person-name">
-												{s.from_person}
+							<div
+								id="receipt-export"
+								className="receipt-export-container"
+							>
+								<h3 className="receipt-title">
+									💰 群組結算清單
+								</h3>
+								<ul className="settlement-list">
+									{overview.settlements.map((s, idx) => (
+										<li
+											key={`${s.from_id}-${s.to_id}-${idx}`}
+											className="settlement-item"
+										>
+											<div className="settlement-route">
+												<span className="person-name">
+													{s.from_person}
+												</span>
+												<ArrowRight className="icon-arrow" />
+												<span className="person-name">
+													{s.to_person}
+												</span>
+											</div>
+											<span className="settlement-amount">
+												{formatMoney(s.amount)}
 											</span>
-											<ArrowRight className="icon-arrow" />
-											<span className="person-name">
-												{s.to_person}
-											</span>
-										</div>
-										<span className="settlement-amount">
-											{formatMoney(s.amount)}
-										</span>
-									</li>
-								))}
-							</ul>
+										</li>
+									))}
+								</ul>
+								<div className="receipt-watermark-container">
+									<p className="receipt-watermark-text">
+										由 DeptApp 智慧結算生成
+									</p>
+								</div>
+							</div>
 						)}
 					</section>
 

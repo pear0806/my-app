@@ -854,6 +854,50 @@ p {
 	color: var(--slate-tag-text);
 }
 
+.settlement-actions {
+	display: flex;
+	gap: 8px;
+}
+
+.btn-export {
+	background-color: #10b981;
+	color: white;
+	border-color: #10b981;
+}
+
+.btn-export:hover {
+	background-color: #059669;
+	border-color: #059669;
+}
+
+.receipt-export-container {
+	padding: 20px;
+	background-color: #2a2a2a;
+	border-radius: 12px;
+	margin-top: 15px;
+}
+
+.receipt-title {
+	text-align: center;
+	margin-top: 0;
+	margin-bottom: 20px;
+	color: #e5e7eb;
+	font-size: 1.1rem;
+}
+
+.receipt-watermark-container {
+	text-align: center;
+	margin-top: 20px;
+	border-top: 1px dashed #4b5563;
+	padding-top: 15px;
+}
+
+.receipt-watermark-text {
+	font-size: 12px;
+	color: #9ca3af;
+	margin: 0;
+}
+
 /* Toast Notification */
 .toast {
 	position: fixed;
@@ -904,7 +948,6 @@ p {
 	color: var(--text-secondary);
 }
 
-/* Utilities */
 @keyframes spin {
 	from {
 		transform: rotate(0deg);
@@ -940,4 +983,39 @@ p {
 	.refresh-icon.is-spinning {
 		animation: none;
 	}
+}
+
+/* --- 側滑刪除 (Swipe to Delete) 樣式 --- */
+
+/* 確保側滑外層容器能填滿 100% 寬度 */
+.swipeable-list-wrapper {
+	width: 100%;
+	margin-bottom: 10px;
+}
+
+/* 原本的 history-item 需要微調，讓它在滑動時沒有外距干擾 */
+.swipe-history-item {
+	width: 100%;
+	background: #2b2b2b; /* 保持你原本的深色卡片底色 */
+	border-radius: 8px;
+	padding: 16px;
+	box-sizing: border-box;
+}
+
+/* 隱藏在底下的紅色刪除按鈕區塊 */
+.swipe-delete-action {
+	background-color: #ef4444; /* iOS 原生紅色 */
+	color: white;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	width: 80px;
+	height: 100%;
+	border-top-right-radius: 8px;
+	border-bottom-right-radius: 8px;
+	font-size: 13px;
+	font-weight: bold;
+	gap: 4px;
+	cursor: pointer;
 }
