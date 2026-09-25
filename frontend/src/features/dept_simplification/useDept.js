@@ -5,6 +5,7 @@ import {
     useState,
 } from 'react';
 
+import { triggerHaptic } from '../../utils/haptics';
 import {
     createExpense,
     createPerson,
@@ -173,6 +174,7 @@ export function useDept() {
 	const handleAddGroupExpense = (e) => {
 		e.preventDefault();
 		if (!amount || !payerId || selectedParticipants.length === 0) {
+			triggerHaptic.warning();
 			notify("請填寫金額，並至少選擇一位分攤人", "error");
 			return;
 		}
@@ -207,17 +209,22 @@ export function useDept() {
 			});
 			setDesc("");
 			setAmount("");
+			triggerHaptic.medium();
 		}, "已記錄群組花費");
 	};
 
 	const handleAddDirectDebt = (e) => {
 		e.preventDefault();
-		if (!directAmount || !directPayerId || !directDebtorId)
+		if (!directAmount || !directPayerId || !directDebtorId) {
+			triggerHaptic.warning();
 			return notify("請選擇雙方並填寫金額", "error");
-		if (directPayerId === directDebtorId)
+		}
+		if (directPayerId === directDebtorId) {
+			triggerHaptic.warning();
 			return notify("出錢人與被代墊人不能相同", "error");
+		}
 
-		// 💡 2. 攔截並轉換代墊金額與描述
+		// 💡 攔截並轉換代墊金額與描述
 		const finalAmount =
 			currency === "TWD"
 				? parseFloat(directAmount)
@@ -234,7 +241,7 @@ export function useDept() {
 
 		run(async () => {
 			await createExpense({
-				description: finalDesc, // 帶入轉換後的描述
+				description: finalDesc,
 				total_amount: fromCents(totalCents),
 				payer_id: Number(directPayerId),
 				splits: [
@@ -247,9 +254,11 @@ export function useDept() {
 			setDirectDesc("");
 			setDirectAmount("");
 			setDirectDebtorId("");
+			triggerHaptic.medium(); // 💡 補上成功震動
 		}, "已記錄代墊");
 	};
 
+	// 👇 這些是被你截斷遺失的關鍵函數，幫你補回來了
 	const copySettlements = async () => {
 		if (overview.settlements.length === 0) return;
 		const text = overview.settlements
@@ -264,6 +273,7 @@ export function useDept() {
 		overview.original_edges - overview.simplified_count,
 		0,
 	);
+
 	const settledEveryone =
 		persons.length > 0 &&
 		overview.settlements.length === 0 &&

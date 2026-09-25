@@ -1,6 +1,6 @@
+import 'react-swipeable-list/dist/styles.css';
 import '../../App.css';
 import './App.css';
-import 'react-swipeable-list/dist/styles.css';
 
 import html2canvas from 'html2canvas';
 import {
@@ -18,7 +18,14 @@ import {
     Wallet,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import {
+    SwipeableList,
+    SwipeableListItem,
+    SwipeAction,
+    TrailingActions,
+} from 'react-swipeable-list';
 
+import { triggerHaptic } from '../../utils/haptics';
 import {
     formatMoney,
     initials,
@@ -121,6 +128,23 @@ export default function App() {
 			setToast({ message: `圖卡生成失敗，錯誤:${err}`, type: "error" });
 		}
 	};
+
+	const trailingActions = (expenseId) => (
+		<TrailingActions>
+			<SwipeAction
+				destructive={true}
+				onClick={() => {
+					triggerHaptic.heavy(); // 💡 觸發重度震動
+					run(() => deleteExpense(expenseId), "已刪除這筆記錄");
+				}}
+			>
+				<div className="swipe-delete-action">
+					<Trash2 size={20} />
+					<span>刪除</span>
+				</div>
+			</SwipeAction>
+		</TrailingActions>
+	);
 
 	return (
 		<div className="app-container">
@@ -572,7 +596,7 @@ export default function App() {
 						{overview.expenses.length === 0 ? (
 							<p className="empty-msg">目前尚無任何紀錄</p>
 						) : (
-							<ul className="history-list">
+							<SwipeableList className="history-list">
 								{overview.expenses.map((exp) => {
 									const isDirectDebt =
 										exp.splits.length === 1 &&
@@ -584,92 +608,106 @@ export default function App() {
 										persons.find(
 											(p) => p.id === exp.payer_id,
 										)?.name ?? "未知";
+
 									return (
-										<li
+										<div
 											key={exp.id}
-											className="history-item"
+											className="swipeable-list-wrapper"
 										>
-											<div className="history-item-header">
-												<div>
-													<p className="history-desc">
-														{exp.description}
-													</p>
-													{isDirectDebt ? (
-														<p className="history-sub-desc">
-															{payer} 幫{" "}
-															{persons.find(
-																(p) =>
-																	p.id ===
-																	exp
-																		.splits[0]
-																		.person_id,
-															)?.name ??
-																"未知"}{" "}
-															代墊{" "}
-															{formatMoney(
-																exp.total_amount,
+											<SwipeableListItem
+												trailingActions={trailingActions(
+													exp.id,
+												)}
+											>
+												<div className="swipe-history-item">
+													<div
+														className="history-item-header"
+														style={{
+															alignItems:
+																"flex-start",
+														}}
+													>
+														<div>
+															<p className="history-desc">
+																{
+																	exp.description
+																}
+															</p>
+															{isDirectDebt ? (
+																<p className="history-sub-desc">
+																	{payer} 幫{" "}
+																	{persons.find(
+																		(p) =>
+																			p.id ===
+																			exp
+																				.splits[0]
+																				.person_id,
+																	)?.name ??
+																		"未知"}{" "}
+																	代墊{" "}
+																	{formatMoney(
+																		exp.total_amount,
+																	)}
+																</p>
+															) : (
+																<p className="history-sub-desc">
+																	總額{" "}
+																	{formatMoney(
+																		exp.total_amount,
+																	)}
+																	，由 {payer}{" "}
+																	先付
+																</p>
 															)}
-														</p>
-													) : (
-														<p className="history-sub-desc">
-															總額{" "}
-															{formatMoney(
-																exp.total_amount,
+														</div>
+														{/* 原本在這裡的垃圾桶按鈕已經被移除了，現在藏在滑動手勢裡！ */}
+													</div>
+
+													{!isDirectDebt && (
+														<div className="history-splits">
+															{exp.splits.map(
+																(s) => {
+																	const isPayer =
+																		s.person_id ===
+																		exp.payer_id;
+																	const name =
+																		persons.find(
+																			(
+																				p,
+																			) =>
+																				p.id ===
+																				s.person_id,
+																		)
+																			?.name ??
+																		"未知";
+																	return (
+																		<span
+																			key={
+																				s.id
+																			}
+																			className={`split-tag ${isPayer ? "tag-payer" : "tag-debtor"}`}
+																		>
+																			{
+																				name
+																			}{" "}
+																			{isPayer
+																				? "自付"
+																				: "欠"}{" "}
+																			{formatMoney(
+																				s.amount,
+																			)}
+																		</span>
+																	);
+																},
 															)}
-															，由 {payer} 先付
-														</p>
+														</div>
 													)}
 												</div>
-												<button
-													type="button"
-													onClick={() =>
-														run(
-															() =>
-																deleteExpense(
-																	exp.id,
-																),
-															"已刪除這筆記錄",
-														)
-													}
-													className="btn-icon-danger"
-													title="刪除這筆"
-												>
-													<Trash2 />
-												</button>
-											</div>
-											{!isDirectDebt && (
-												<div className="history-splits">
-													{exp.splits.map((s) => {
-														const isPayer =
-															s.person_id ===
-															exp.payer_id;
-														const name =
-															persons.find(
-																(p) =>
-																	p.id ===
-																	s.person_id,
-															)?.name ?? "未知";
-														return (
-															<span
-																key={s.id}
-																className={`split-tag ${isPayer ? "tag-payer" : "tag-debtor"}`}
-															>
-																{name}{" "}
-																{isPayer
-																	? "自付"
-																	: "欠"}{" "}
-																{formatMoney(
-																	s.amount,
-																)}
-															</span>
-														);
-													})}
-												</div>
-											)}
-										</li>
+											</SwipeableListItem>
+										</div>
 									);
 								})}
-							</ul>
+							</SwipeableList>
 						)}
 					</section>
 
@@ -689,6 +727,7 @@ export default function App() {
 									"確定要刪除所有人員與帳務資料嗎？此動作無法復原。",
 								);
 								if (!ok) return;
+								triggerHaptic.heavy();
 								run(async () => {
 									await resetAll();
 									setPayerId("");

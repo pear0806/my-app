@@ -39,7 +39,7 @@ function Home() {
 
 	return (
 		<div style={containerStyle}>
-			<h1>我的實用工具網站</h1>
+			<h1>My-App</h1>
 			<div style={{ display: "flex", gap: "20px" }}>
 				<Link style={cardStyle} to="/blast">
 					🧩 方塊解題 (Block Blast Solver)
