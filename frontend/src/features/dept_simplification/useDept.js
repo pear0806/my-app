@@ -1,335 +1,127 @@
-import {
-    useCallback,
-    useEffect,
-    useMemo,
-    useState,
-} from 'react';
+import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { triggerHaptic } from '../../utils/haptics';
+import { triggerHaptic } from "../../utils/haptics";
 import {
-    createExpense,
-    createPerson,
-    deleteExpense,
-    deletePerson,
-    fetchOverview,
-    resetAll,
-} from './api';
-import {
-    evenSplitCents,
-    fromCents,
-    toCents,
-} from './money';
+	createExpense,
+	createPerson,
+	deleteExpense,
+	deletePerson,
+	fetchOverview,
+	resetAll,
+} from "./api";
 
-function emptyOverview() {
-	return {
-		persons: [],
-		expenses: [],
-		balances: [],
-		settlements: [],
-		original_edges: 0,
-		simplified_count: 0,
-	};
-}
+const TOAST_DURATION_MS = 3200;
 
+const emptyOverview = () => ({
+	persons: [],
+	expenses: [],
+	balances: [],
+	settlements: [],
+	original_edges: 0,
+	simplified_count: 0,
+});
+
+/** 負責「資料與動作」；表單狀態由各表單元件自己管理。 */
 export function useDept() {
-	const [currency, setCurrency] = useState("TWD");
-	const [exchangeRate, setExchangeRate] = useState(1);
-	const [isFetchingRate, setIsFetchingRate] = useState(false);
 	const [overview, setOverview] = useState(emptyOverview);
 	const [loading, setLoading] = useState(true);
 	const [busy, setBusy] = useState(false);
 	const [toast, setToast] = useState(null);
-	const [tab, setTab] = useState("split");
 
-	const [newPersonName, setNewPersonName] = useState("");
-	const [desc, setDesc] = useState("");
-	const [amount, setAmount] = useState("");
-	const [payerId, setPayerId] = useState("");
-	const [selectedParticipants, setSelectedParticipants] = useState([]);
-
-	const [directDesc, setDirectDesc] = useState("");
-	const [directAmount, setDirectAmount] = useState("");
-	const [directPayerId, setDirectPayerId] = useState("");
-	const [directDebtorId, setDirectDebtorId] = useState("");
-
-	const [copied, setCopied] = useState(false);
-
-	const persons = overview.persons || [];
-
-	const notify = useCallback((message, type = "ok") => {
-		setToast({ message, type });
-	}, []);
+	const notify = useCallback((message, type = "ok") => setToast({ message, type }), []);
+	const dismissToast = useCallback(() => setToast(null), []);
 
 	useEffect(() => {
 		if (!toast) return undefined;
-		const id = window.setTimeout(() => setToast(null), 3200);
+		const id = window.setTimeout(() => setToast(null), TOAST_DURATION_MS);
 		return () => window.clearTimeout(id);
 	}, [toast]);
 
-	useEffect(() => {
-		if (currency === "TWD") {
-			setExchangeRate(1);
-			return;
-		}
-		let isMounted = true;
-		const fetchRate = async () => {
-			setIsFetchingRate(true);
-			try {
-				// 抓取所選外幣的基準匯率
-				const res = await fetch(
-					`https://open.er-api.com/v6/latest/${currency}`,
-				);
-				const data = await res.json();
-				if (isMounted && data.rates && data.rates.TWD) {
-					setExchangeRate(data.rates.TWD);
-				}
-			} catch (err) {
-				console.error("匯率獲取失敗", err);
-			} finally {
-				if (isMounted) setIsFetchingRate(false);
-			}
-		};
-		fetchRate();
-		return () => {
-			isMounted = false;
-		};
-	}, [currency]);
-
 	const load = useCallback(async () => {
 		const data = await fetchOverview();
-		if (!data || !data.persons) return;
-
-		setOverview(data);
-		setPayerId(
-			(current) => current || String(data?.persons?.[0]?.id ?? ""),
-		);
-		setDirectPayerId(
-			(current) => current || String(data?.persons?.[0]?.id ?? ""),
-		);
-		setSelectedParticipants((current) => {
-			if (current.length > 0) {
-				return current.filter((id) =>
-					data.persons.some((p) => p.id === id),
-				);
-			}
-			return data.persons.map((p) => p.id);
-		});
+		if (data?.persons) setOverview(data);
 	}, []);
 
 	useEffect(() => {
-		let isMounted = true;
-		const initLoad = async () => {
+		let active = true;
+		const init = async () => {
 			try {
 				await load();
 			} catch (err) {
-				if (isMounted) {
-					notify(err.message || "無法連線後端", "error");
-				}
+				if (active) notify(err.message || "無法連線後端", "error");
 			} finally {
-				if (isMounted) {
-					setLoading(false);
-				}
+				if (active) setLoading(false);
 			}
 		};
-		initLoad();
+		init();
 		return () => {
-			isMounted = false;
+			active = false;
 		};
 	}, [load, notify]);
 
-	const run = async (fn, successMessage) => {
-		setBusy(true);
-		try {
-			await fn();
-			await load();
-			if (successMessage) notify(successMessage);
-		} catch (err) {
-			// 處理 Axios 拋出的錯誤格式
-			const errorMsg =
-				err.response?.data?.detail || err.message || "操作失敗";
-			notify(errorMsg, "error");
-		} finally {
-			setBusy(false);
-		}
-	};
-
-	const handleAddPerson = (e) => {
-		e.preventDefault();
-		const name = newPersonName.trim();
-		if (!name) return;
-		run(async () => {
-			await createPerson(name);
-			setNewPersonName("");
-		}, `已加入 ${name}`);
-	};
-
-	const toggleParticipant = (id) => {
-		setSelectedParticipants((current) =>
-			current.includes(id)
-				? current.filter((p) => p !== id)
-				: [...current, id],
-		);
-	};
-
-	const handleAddGroupExpense = (e) => {
-		e.preventDefault();
-		if (!amount || !payerId || selectedParticipants.length === 0) {
-			triggerHaptic.warning();
-			notify("請填寫金額，並至少選擇一位分攤人", "error");
-			return;
-		}
-
-		// 💡 1. 攔截並轉換金額與描述
-		const finalAmount =
-			currency === "TWD"
-				? parseFloat(amount)
-				: parseFloat(amount) * exchangeRate;
-
-		const baseDesc = desc.trim() || "群組花費";
-		const finalDesc =
-			currency === "TWD"
-				? baseDesc
-				: `${baseDesc} (原外幣: ${amount} ${currency})`;
-
-		const totalCents = toCents(finalAmount);
-		if (totalCents <= 0) return notify("金額必須大於 0", "error");
-
-		const parts = evenSplitCents(totalCents, selectedParticipants.length);
-		const splits = selectedParticipants.map((pid, index) => ({
-			person_id: pid,
-			amount: fromCents(parts[index]),
-		}));
-
-		run(async () => {
-			await createExpense({
-				description: finalDesc,
-				total_amount: fromCents(totalCents),
-				payer_id: Number(payerId),
-				splits,
-			});
-			setDesc("");
-			setAmount("");
-			triggerHaptic.medium();
-		}, "已記錄群組花費");
-	};
-
-	const handleAddDirectDebt = (e) => {
-		e.preventDefault();
-		if (!directAmount || !directPayerId || !directDebtorId) {
-			triggerHaptic.warning();
-			return notify("請選擇雙方並填寫金額", "error");
-		}
-		if (directPayerId === directDebtorId) {
-			triggerHaptic.warning();
-			return notify("出錢人與被代墊人不能相同", "error");
-		}
-
-		// 💡 攔截並轉換代墊金額與描述
-		const finalAmount =
-			currency === "TWD"
-				? parseFloat(directAmount)
-				: parseFloat(directAmount) * exchangeRate;
-
-		const baseDesc = directDesc.trim() || "指定代墊";
-		const finalDesc =
-			currency === "TWD"
-				? baseDesc
-				: `${baseDesc} (原外幣: ${directAmount} ${currency})`;
-
-		const totalCents = toCents(finalAmount);
-		if (totalCents <= 0) return notify("金額必須大於 0", "error");
-
-		run(async () => {
-			await createExpense({
-				description: finalDesc,
-				total_amount: fromCents(totalCents),
-				payer_id: Number(directPayerId),
-				splits: [
-					{
-						person_id: Number(directDebtorId),
-						amount: fromCents(totalCents),
-					},
-				],
-			});
-			setDirectDesc("");
-			setDirectAmount("");
-			setDirectDebtorId("");
-			triggerHaptic.medium(); // 💡 補上成功震動
-		}, "已記錄代墊");
-	};
-
-	// 👇 這些是被你截斷遺失的關鍵函數，幫你補回來了
-	const copySettlements = async () => {
-		if (overview.settlements.length === 0) return;
-		const text = overview.settlements
-			.map((s) => `${s.from_person} → ${s.to_person} ${s.amount}`)
-			.join("\n");
-		await navigator.clipboard.writeText(text);
-		setCopied(true);
-		window.setTimeout(() => setCopied(false), 1600);
-	};
-
-	const savedCount = Math.max(
-		overview.original_edges - overview.simplified_count,
-		0,
+	/** 執行一個會改動資料的動作，成功後重新載入。回傳是否成功。 */
+	const run = useCallback(
+		async (task, successMessage) => {
+			setBusy(true);
+			try {
+				await task();
+				await load();
+				if (successMessage) notify(successMessage);
+				return true;
+			} catch (err) {
+				triggerHaptic.warning();
+				notify(err.message || "操作失敗", "error");
+				return false;
+			} finally {
+				setBusy(false);
+			}
+		},
+		[load, notify],
 	);
 
-	const settledEveryone =
-		persons.length > 0 &&
-		overview.settlements.length === 0 &&
-		overview.expenses.length > 0;
+	const actions = useMemo(
+		() => ({
+			refresh: () => run(load),
+			addPerson: (name) => run(() => createPerson(name), `已加入 ${name}`),
+			removePerson: (person) =>
+				run(() => deletePerson(person.id), `已移除 ${person.name}`),
+			/** buildPayload 在 run 內執行，所以驗證錯誤會自動變成錯誤 Toast。 */
+			addExpense: async (buildPayload, successMessage) => {
+				const ok = await run(() => createExpense(buildPayload()), successMessage);
+				if (ok) triggerHaptic.medium();
+				return ok;
+			},
+			removeExpense: (expenseId) => {
+				triggerHaptic.heavy();
+				return run(() => deleteExpense(expenseId), "已刪除這筆記錄");
+			},
+			resetAll: () => {
+				triggerHaptic.heavy();
+				return run(resetAll, "資料已全部重置");
+			},
+		}),
+		[run, load],
+	);
+
 	const sortedBalances = useMemo(
-		() =>
-			[...overview.balances].sort(
-				(a, b) => Math.abs(b.amount) - Math.abs(a.amount),
-			),
+		() => [...overview.balances].sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)),
 		[overview.balances],
 	);
 
 	return {
-		currency,
-		setCurrency,
-		exchangeRate,
-		isFetchingRate,
 		overview,
+		persons: overview.persons,
 		loading,
 		busy,
 		toast,
-		setToast,
-		tab,
-		setTab,
-		newPersonName,
-		setNewPersonName,
-		desc,
-		setDesc,
-		amount,
-		setAmount,
-		payerId,
-		setPayerId,
-		selectedParticipants,
-		setSelectedParticipants,
-		directDesc,
-		setDirectDesc,
-		directAmount,
-		setDirectAmount,
-		directPayerId,
-		setDirectPayerId,
-		directDebtorId,
-		setDirectDebtorId,
-		copied,
-		persons,
+		notify,
+		dismissToast,
 		sortedBalances,
-		savedCount,
-		settledEveryone,
-		handleAddPerson,
-		toggleParticipant,
-		handleAddGroupExpense,
-		handleAddDirectDebt,
-		copySettlements,
-		run,
-		deletePerson,
-		deleteExpense,
-		resetAll,
-		load,
+		savedCount: Math.max(overview.original_edges - overview.simplified_count, 0),
+		settledEveryone:
+			overview.persons.length > 0 &&
+			overview.settlements.length === 0 &&
+			overview.expenses.length > 0,
+		actions,
 	};
 }

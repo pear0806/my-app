@@ -1,0 +1,32 @@
+.panel {
+	padding: 1.25rem;
+	border: 1px solid var(--rose-100);
+	border-radius: var(--radius-xl);
+	background-color: rgb(255 241 242 / 0.7);
+}
+
+@media (min-width: 640px) {
+	.panel {
+		padding: 1.5rem;
+	}
+}
+
+.header {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	margin-bottom: 0.5rem;
+	color: var(--rose-800);
+}
+
+.header svg {
+	width: 1.25rem;
+	height: 1.25rem;
+}
+
+.description {
+	margin-bottom: 1rem;
+	font-size: 0.875rem;
+	line-height: 1.5rem;
+	color: var(--rose-700);
+}

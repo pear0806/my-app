@@ -1,0 +1,228 @@
+.page {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	min-height: 100svh;
+	padding: 1.25rem;
+	background-color: #1e1e1e;
+	color: #fff;
+}
+
+.backRow {
+	align-self: flex-start;
+}
+
+.title {
+	font-size: 1.5rem;
+	font-weight: 600;
+}
+
+.hint {
+	margin: 0.5rem 0 1.25rem;
+	color: #aaa;
+	text-align: center;
+}
+
+.board {
+	display: grid;
+	grid-template-columns: repeat(8, 40px);
+	grid-template-rows: repeat(8, 40px);
+	gap: 2px;
+	margin-bottom: 1.25rem;
+	padding: 8px;
+	border-radius: 8px;
+	background-color: #333;
+	box-shadow: 0 4px 10px rgb(0 0 0 / 0.5);
+	user-select: none;
+}
+
+.cell {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 40px;
+	height: 40px;
+	border-radius: 4px;
+	background-color: #444;
+	font-size: 20px;
+	font-weight: bold;
+	color: #fff;
+	cursor: pointer;
+	user-select: none;
+	transition: background-color 0.3s ease;
+}
+
+.cell:hover {
+	background-color: #555;
+}
+
+.cell[data-filled="true"] {
+	background-color: #007bff;
+}
+
+/* 解答步驟：放在最後，同權重下覆蓋 filled */
+.cell[data-step] {
+	box-shadow: inset 0 0 0 2px #fff;
+}
+.cell[data-step="1"] {
+	background-color: #28a745;
+}
+.cell[data-step="2"] {
+	background-color: #ffc107;
+	color: #000;
+}
+.cell[data-step="3"] {
+	background-color: #17a2b8;
+}
+
+.slots {
+	display: flex;
+	gap: 15px;
+	margin-bottom: 1.25rem;
+}
+
+.slot {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 90px;
+	height: 90px;
+	border: 2px dashed #666;
+	border-radius: 10px;
+	background-color: #333;
+	cursor: pointer;
+	transition: border-color 0.2s;
+}
+
+.slot:hover {
+	border-color: #aaa;
+}
+
+.slot[data-active="true"] {
+	border-color: #ffc107;
+	background-color: #444;
+	box-shadow: 0 0 10px rgb(255 193 7 / 0.5);
+}
+
+.miniBlock {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.miniRow {
+	display: flex;
+	gap: 2px;
+}
+
+.miniCell {
+	width: 18px;
+	height: 18px;
+	border-radius: 2px;
+}
+
+.miniCell[data-filled="true"] {
+	background-color: #ff5722;
+}
+
+.picker {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: 15px;
+	max-width: 350px;
+	margin-bottom: 1.25rem;
+	padding: 15px;
+	border: 1px solid #555;
+	border-radius: 10px;
+	background-color: #2b2b2b;
+}
+
+.pickerItem {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 60px;
+	min-height: 60px;
+	padding: 10px;
+	border-radius: 8px;
+	background-color: #3a3a3a;
+	cursor: pointer;
+	transition:
+		background-color 0.2s,
+		transform 0.2s;
+}
+
+.pickerItem:hover {
+	background-color: #555;
+	transform: scale(1.1);
+}
+
+.actions {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: 15px;
+	margin-bottom: 1.25rem;
+}
+
+.button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	padding: 12px 30px;
+	border: none;
+	border-radius: 8px;
+	background-color: #007bff;
+	font-size: 18px;
+	font-weight: bold;
+	color: #fff;
+	cursor: pointer;
+	transition:
+		background-color 0.2s,
+		transform 0.2s;
+}
+
+.button:hover:not(:disabled) {
+	background-color: #0056b3;
+}
+
+.button[data-variant="fill"] {
+	background-color: #6c757d;
+}
+.button[data-variant="fill"]:hover {
+	background-color: #5a6268;
+}
+
+.button[data-variant="clear"] {
+	background-color: #d65966;
+}
+.button[data-variant="clear"]:hover {
+	background-color: #c82333;
+}
+
+.button[data-variant="camera"] {
+	background-color: #8b5cf6;
+}
+.button[data-variant="camera"]:hover {
+	background-color: #7c3aed;
+	transform: translateY(-2px);
+}
+
+.result {
+	width: 100%;
+	max-width: 400px;
+	padding: 15px 25px;
+	border-left: 5px solid #28a745;
+	border-radius: 8px;
+	background-color: #2b2b2b;
+}
+
+.resultTitle {
+	margin-bottom: 10px;
+}
+
+.error {
+	color: #ff4444;
+}

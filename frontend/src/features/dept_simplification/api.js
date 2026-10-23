@@ -1,8 +1,11 @@
 import { apiClient } from "../../utils/apiClient.js";
 
-export const fetchOverview = () => apiClient.get(`/overview/`);
-export const createPerson = (name) => apiClient.post(`/persons/`, { name });
-export const deletePerson = (id) => apiClient.delete(`/persons/${id}`);
-export const createExpense = (payload) => apiClient.post(`/expenses/`, payload);
-export const deleteExpense = (id) => apiClient.delete(`/expenses/${id}`);
-export const resetAll = () => apiClient.delete(`/reset`);
+// 對應後端 main.py：app.include_router(dept_router, prefix="/api/dept")
+const BASE = "/api/dept";
+
+export const fetchOverview = () => apiClient.get(`${BASE}/overview/`);
+export const createPerson = (name) => apiClient.post(`${BASE}/persons/`, { name });
+export const deletePerson = (id) => apiClient.delete(`${BASE}/persons/${id}`);
+export const createExpense = (payload) => apiClient.post(`${BASE}/expenses/`, payload);
+export const deleteExpense = (id) => apiClient.delete(`${BASE}/expenses/${id}`);
+export const resetAll = () => apiClient.delete(`${BASE}/reset/`);

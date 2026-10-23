@@ -1,0 +1,26 @@
+.backButton {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.375rem;
+	margin-bottom: 1rem;
+	padding: 0.375rem 0.75rem 0.375rem 0.5rem;
+	border-radius: var(--radius-pill);
+	color: inherit;
+	font-size: 0.875rem;
+	font-weight: 500;
+	text-decoration: none;
+	opacity: 0.8;
+	transition:
+		opacity 0.15s,
+		background-color 0.15s;
+}
+
+.backButton:hover {
+	opacity: 1;
+	background-color: rgb(127 127 127 / 0.15);
+}
+
+.backButton:focus-visible {
+	outline: 2px solid currentColor;
+	outline-offset: 2px;
+}

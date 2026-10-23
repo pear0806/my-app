@@ -1,0 +1,21 @@
+.addForm {
+	display: flex;
+	gap: 0.5rem;
+	margin-bottom: 1rem;
+}
+
+.list {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+}
+
+.member {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.25rem 0.5rem 0.25rem 0.25rem;
+	border-radius: var(--radius-pill);
+	background-color: var(--slate-50);
+	font-size: 0.875rem;
+}

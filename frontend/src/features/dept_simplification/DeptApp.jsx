@@ -1,749 +1,96 @@
-import 'react-swipeable-list/dist/styles.css';
-import '../../App.css';
-import './App.css';
+import { RefreshCw, Sparkles } from "lucide-react";
 
-import html2canvas from 'html2canvas';
-import {
-    AlertTriangle,
-    ArrowLeft,
-    ArrowRight,
-    Check,
-    Copy,
-    Plus,
-    Receipt,
-    RefreshCw,
-    Sparkles,
-    Trash2,
-    Users,
-    Wallet,
-} from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
-import {
-    SwipeableList,
-    SwipeableListItem,
-    SwipeAction,
-    TrailingActions,
-} from 'react-swipeable-list';
+import BackButton from "../../components/BackButton/BackButton";
+import { cx } from "../../utils/cx";
+import styles from "./DeptApp.module.css";
+import BalanceBoard from "./components/BalanceBoard";
+import DangerPanel from "./components/DangerPanel";
+import ExpensePanel from "./components/ExpensePanel";
+import HistoryPanel from "./components/HistoryPanel";
+import MemberPanel from "./components/MemberPanel";
+import SettlementPanel from "./components/SettlementPanel";
+import Toast from "./components/Toast";
+import { useDept } from "./useDept";
 
-import { triggerHaptic } from '../../utils/haptics';
-import {
-    formatMoney,
-    initials,
-} from './money';
-import { useDept } from './useDept';
-
-function Toast({ toast, onClose }) {
-	if (!toast) return null;
-	const isError = toast.type === "error";
-	return (
-		<div
-			className={`toast-container ${isError ? "toast-error" : "toast-success"}`}
-		>
-			<div className="toast-content">
-				<div className="toast-indicator" />
-				<p className="toast-message">{toast.message}</p>
-				<button
-					type="button"
-					onClick={onClose}
-					className="toast-close-btn"
-				>
-					關閉
-				</button>
-			</div>
-		</div>
-	);
-}
-
-function Avatar({ name }) {
-	return <span className="avatar">{initials(name)}</span>;
-}
-
-export default function App() {
-	const navigate = useNavigate();
+export default function DeptApp() {
 	const {
-		currency,
-		setCurrency,
-		exchangeRate,
-		isFetchingRate,
 		overview,
+		persons,
 		loading,
 		busy,
 		toast,
-		setToast,
-		tab,
-		setTab,
-		newPersonName,
-		setNewPersonName,
-		desc,
-		setDesc,
-		amount,
-		setAmount,
-		payerId,
-		setPayerId,
-		selectedParticipants,
-		setSelectedParticipants,
-		directDesc,
-		setDirectDesc,
-		directAmount,
-		setDirectAmount,
-		directPayerId,
-		setDirectPayerId,
-		directDebtorId,
-		setDirectDebtorId,
-		copied,
-		persons,
+		notify,
+		dismissToast,
 		sortedBalances,
 		savedCount,
 		settledEveryone,
-		handleAddPerson,
-		toggleParticipant,
-		handleAddGroupExpense,
-		handleAddDirectDebt,
-		copySettlements,
-		run,
-		deletePerson,
-		deleteExpense,
-		resetAll,
-		load,
+		actions,
 	} = useDept();
 
-	const handleExportImage = async () => {
-		const element = document.getElementById("receipt-export");
-		if (!element) return;
-
-		setToast({ message: "📸 正在繪製請款圖卡...", type: "ok" });
-
-		try {
-			const canvas = await html2canvas(element, {
-				backgroundColor: "#2a2a2a",
-				scale: 3,
-			});
-			const dataUrl = canvas.toDataURL("image/png");
-
-			const link = document.createElement("a");
-			link.download = `分帳結算_${new Date().toISOString().slice(0, 10)}.png`;
-			link.href = dataUrl;
-			link.click();
-		} catch (err) {
-			setToast({ message: `圖卡生成失敗，錯誤:${err}`, type: "error" });
-		}
-	};
-
-	const trailingActions = (expenseId) => (
-		<TrailingActions>
-			<SwipeAction
-				destructive={true}
-				onClick={() => {
-					triggerHaptic.heavy(); // 💡 觸發重度震動
-					run(() => deleteExpense(expenseId), "已刪除這筆記錄");
-				}}
-			>
-				<div className="swipe-delete-action">
-					<Trash2 size={20} />
-					<span>刪除</span>
-				</div>
-			</SwipeAction>
-		</TrailingActions>
-	);
-
 	return (
-		<div className="app-container">
-			<header className="app-header">
-				<button onClick={() => navigate(`/`)} className="btn-back">
-					<ArrowLeft size={20}>返回首頁</ArrowLeft>
-				</button>
-				<div className="header-titles">
-					<p className="badge">
-						<Sparkles />
-						最少轉帳結算
-					</p>
-					<h1 className="page-title">分帳與債務簡化</h1>
-					<p className="page-description">
-						記下一筆群組花費或代墊，系統會用淨額配對算出最少轉帳次數，避免大家互相還來還去。
-					</p>
-				</div>
-				<button
-					type="button"
-					onClick={() => run(load)}
-					className="btn-refresh"
-				>
-					<RefreshCw className={loading || busy ? "icon-spin" : ""} />
-					重新整理
-				</button>
-			</header>
+		<div className={styles.page}>
+			<div className={styles.container}>
+				<BackButton />
 
-			<section className="balances-section">
-				{loading && persons.length === 0 ? (
-					<div className="message-box">載入中…</div>
-				) : persons.length === 0 ? (
-					<div className="message-box border-dashed">
-						先加入成員，餘額看板就會出現在這裡。
-					</div>
-				) : (
-					sortedBalances.map((b) => {
-						const owed = b.amount > 0.005;
-						const owes = b.amount < -0.005;
-						return (
-							<article key={b.person_id} className="balance-card">
-								<div className="balance-card-content">
-									<Avatar name={b.name} />
-									<div className="balance-info">
-										<p className="person-name">{b.name}</p>
-										<p
-											className={`balance-amount ${owed ? "text-positive" : owes ? "text-negative" : "text-neutral"}`}
-										>
-											{owed
-												? `應收 ${formatMoney(b.amount)}`
-												: owes
-													? `應付 ${formatMoney(-b.amount)}`
-													: "已結清"}
-										</p>
-									</div>
-								</div>
-							</article>
-						);
-					})
-				)}
-			</section>
-
-			<div className="main-layout-grid">
-				<div className="left-column">
-					<section className="panel-card">
-						<div className="panel-header">
-							<Users />
-							<h2>成員</h2>
-						</div>
-						<form
-							onSubmit={handleAddPerson}
-							className="add-person-form"
-						>
-							<input
-								type="text"
-								placeholder="輸入名字"
-								value={newPersonName}
-								onChange={(e) =>
-									setNewPersonName(e.target.value)
-								}
-								className="input-field"
-							/>
-							<button
-								type="submit"
-								disabled={busy || !newPersonName.trim()}
-								className="btn-primary"
-							>
-								<Plus /> 新增
-							</button>
-						</form>
-						<ul className="participant-list">
-							{persons.map((p) => (
-								<li key={p.id} className="participant-item">
-									<Avatar name={p.name} />
-									<span>{p.name}</span>
-									<button
-										type="button"
-										title="刪除成員"
-										onClick={() =>
-											run(
-												() => deletePerson(p.id),
-												`已移除 ${p.name}`,
-											)
-										}
-										className="btn-icon-danger"
-									>
-										<Trash2 />
-									</button>
-								</li>
-							))}
-						</ul>
-					</section>
-
-					<section className="panel-card">
-						<div className="panel-header">
-							<Wallet />
-							<h2>記一筆</h2>
-						</div>
-						<div className="tab-container">
-							<button
-								type="button"
-								onClick={() => setTab("split")}
-								className={`tab-btn ${tab === "split" ? "active" : ""}`}
-							>
-								群組平分
-							</button>
-							<button
-								type="button"
-								onClick={() => setTab("direct")}
-								className={`tab-btn ${tab === "direct" ? "active" : ""}`}
-							>
-								一對一代墊
-							</button>
-						</div>
-
-						{tab === "split" ? (
-							<form
-								onSubmit={handleAddGroupExpense}
-								className="expense-form"
-							>
-								<input
-									type="text"
-									placeholder="用途，例如晚餐"
-									value={desc}
-									onChange={(e) => setDesc(e.target.value)}
-									className="input-field"
-								/>
-								<div style={{ display: "flex", gap: "10px" }}>
-									<select
-										value={currency}
-										onChange={(e) =>
-											setCurrency(e.target.value)
-										}
-										className="select-field"
-										style={{
-											width: "115px",
-											flexShrink: 0,
-										}}
-									>
-										<option value="TWD">台幣 TWD</option>
-										<option value="JPY">日圓 JPY</option>
-										<option value="THB">泰銖 THB</option>
-										<option value="MYR">馬幣 MYR</option>
-										<option value="USD">美金 USD</option>
-									</select>
-									<input
-										type="number"
-										min="0"
-										step="0.01"
-										placeholder="總金額"
-										value={amount}
-										onChange={(e) =>
-											setAmount(e.target.value)
-										}
-										className="input-field"
-									/>
-								</div>
-								{currency !== "TWD" && amount > 0 && (
-									<p
-										style={{
-											fontSize: "0.85rem",
-											color: "#8b5cf6",
-											margin: "-10px 0 15px 5px",
-											fontWeight: "bold",
-										}}
-									>
-										{isFetchingRate
-											? "即時匯率轉換中..."
-											: `≈ NT$ ${Math.round(amount * exchangeRate)} (匯率: ${exchangeRate})`}
-									</p>
-								)}
-
-								<label className="form-label">
-									誰先付錢
-									<select
-										value={payerId}
-										onChange={(e) =>
-											setPayerId(e.target.value)
-										}
-										className="select-field"
-									>
-										{persons.map((p) => (
-											<option key={p.id} value={p.id}>
-												{p.name}
-											</option>
-										))}
-									</select>
-								</label>
-
-								<div className="split-participants-section">
-									<div className="split-header">
-										<span>誰要分攤（自動平分到分）</span>
-										<button
-											type="button"
-											onClick={() =>
-												setSelectedParticipants(
-													persons.map((p) => p.id),
-												)
-											}
-											className="btn-link"
-										>
-											全選
-										</button>
-									</div>
-									<div className="split-buttons">
-										{persons.map((p) => {
-											const on =
-												selectedParticipants.includes(
-													p.id,
-												);
-											return (
-												<button
-													type="button"
-													key={p.id}
-													onClick={() =>
-														toggleParticipant(p.id)
-													}
-													className={`participant-toggle-btn ${on ? "selected" : ""}`}
-												>
-													{p.name}
-												</button>
-											);
-										})}
-									</div>
-								</div>
-								<button
-									type="submit"
-									disabled={busy || persons.length === 0}
-									className="btn-submit-green"
-								>
-									記錄群組花費
-								</button>
-							</form>
-						) : (
-							<form
-								onSubmit={handleAddDirectDebt}
-								className="expense-form"
-							>
-								<input
-									type="text"
-									placeholder="用途，例如代買飲料"
-									value={directDesc}
-									onChange={(e) =>
-										setDirectDesc(e.target.value)
-									}
-									className="input-field"
-								/>
-								<div style={{ display: "flex", gap: "10px" }}>
-									<select
-										value={currency}
-										onChange={(e) =>
-											setCurrency(e.target.value)
-										}
-										className="select-field"
-										style={{
-											width: "115px",
-											flexShrink: 0,
-										}}
-									>
-										<option value="TWD">台幣 TWD</option>
-										<option value="JPY">日圓 JPY</option>
-										<option value="THB">泰銖 THB</option>
-										<option value="MYR">馬幣 MYR</option>
-										<option value="USD">美金 USD</option>
-									</select>
-									<input
-										type="number"
-										min="0"
-										step="0.01"
-										placeholder="代墊金額"
-										value={directAmount}
-										onChange={(e) =>
-											setDirectAmount(e.target.value)
-										}
-										className="input-field"
-									/>
-								</div>
-								{currency !== "TWD" && directAmount > 0 && (
-									<p
-										style={{
-											fontSize: "0.85rem",
-											color: "#8b5cf6",
-											margin: "-10px 0 15px 5px",
-											fontWeight: "bold",
-										}}
-									>
-										{isFetchingRate
-											? "即時匯率轉換中..."
-											: `≈ NT$ ${Math.round(directAmount * exchangeRate)} (匯率: ${exchangeRate})`}
-									</p>
-								)}
-								<label className="form-label">
-									誰出錢
-									<select
-										value={directPayerId}
-										onChange={(e) =>
-											setDirectPayerId(e.target.value)
-										}
-										className="select-field"
-									>
-										<option value="">請選擇</option>
-										{persons.map((p) => (
-											<option key={p.id} value={p.id}>
-												{p.name}
-											</option>
-										))}
-									</select>
-								</label>
-
-								<label className="form-label">
-									幫誰出
-									<select
-										value={directDebtorId}
-										onChange={(e) =>
-											setDirectDebtorId(e.target.value)
-										}
-										className="select-field"
-									>
-										<option value="">請選擇</option>
-										{persons.map((p) => (
-											<option key={p.id} value={p.id}>
-												{p.name}
-											</option>
-										))}
-									</select>
-								</label>
-								<button
-									type="submit"
-									disabled={busy || persons.length < 2}
-									className="btn-submit-orange"
-								>
-									記錄指定代墊
-								</button>
-							</form>
-						)}
-					</section>
-				</div>
-
-				<div className="right-column">
-					<section className="panel-card settlement-panel">
-						<div className="settlement-header">
-							<div>
-								<h2>結算方案</h2>
-								<p className="settlement-subtitle">
-									{overview.expenses.length === 0
-										? "還沒有帳務。記一筆之後會自動算出轉帳。"
-										: settledEveryone
-											? "大家帳都平了，不用轉帳。"
-											: `原本約 ${overview.original_edges} 筆往來，現在只要 ${overview.simplified_count} 筆。`}
-								</p>
-							</div>
-							{overview.settlements.length > 0 && (
-								<div className="settlement-actions">
-									<button
-										type="button"
-										onClick={copySettlements}
-										className="btn-copy"
-									>
-										{copied ? (
-											<Check size={16} />
-										) : (
-											<Copy size={16} />
-										)}
-										文字
-									</button>
-									<button
-										type="button"
-										onClick={handleExportImage}
-										className="btn-copy btn-export"
-									>
-										📸 圖卡
-									</button>
-								</div>
-							)}
-						</div>
-
-						{savedCount > 0 && (
-							<p className="saved-count-alert">
-								少轉 {savedCount} 次，大家對一次就能結清。
-							</p>
-						)}
-
-						{overview.settlements.length === 0 ? (
-							<p className="no-settlement-msg">
-								目前沒有需要轉帳的債務。
-							</p>
-						) : (
-							<div
-								id="receipt-export"
-								className="receipt-export-container"
-							>
-								<h3 className="receipt-title">
-									💰 群組結算清單
-								</h3>
-								<ul className="settlement-list">
-									{overview.settlements.map((s, idx) => (
-										<li
-											key={`${s.from_id}-${s.to_id}-${idx}`}
-											className="settlement-item"
-										>
-											<div className="settlement-route">
-												<span className="person-name">
-													{s.from_person}
-												</span>
-												<ArrowRight className="icon-arrow" />
-												<span className="person-name">
-													{s.to_person}
-												</span>
-											</div>
-											<span className="settlement-amount">
-												{formatMoney(s.amount)}
-											</span>
-										</li>
-									))}
-								</ul>
-								<div className="receipt-watermark-container">
-									<p className="receipt-watermark-text">
-										由 DeptApp 智慧結算生成
-									</p>
-								</div>
-							</div>
-						)}
-					</section>
-
-					<section className="panel-card">
-						<div className="panel-header">
-							<Receipt />
-							<h2>歷史明細</h2>
-						</div>
-						{overview.expenses.length === 0 ? (
-							<p className="empty-msg">目前尚無任何紀錄</p>
-						) : (
-							<SwipeableList className="history-list">
-								{overview.expenses.map((exp) => {
-									const isDirectDebt =
-										exp.splits.length === 1 &&
-										Math.abs(
-											exp.splits[0].amount -
-												exp.total_amount,
-										) < 0.005;
-									const payer =
-										persons.find(
-											(p) => p.id === exp.payer_id,
-										)?.name ?? "未知";
-
-									return (
-										<div
-											key={exp.id}
-											className="swipeable-list-wrapper"
-										>
-											<SwipeableListItem
-												trailingActions={trailingActions(
-													exp.id,
-												)}
-											>
-												<div className="swipe-history-item">
-													<div
-														className="history-item-header"
-														style={{
-															alignItems:
-																"flex-start",
-														}}
-													>
-														<div>
-															<p className="history-desc">
-																{
-																	exp.description
-																}
-															</p>
-															{isDirectDebt ? (
-																<p className="history-sub-desc">
-																	{payer} 幫{" "}
-																	{persons.find(
-																		(p) =>
-																			p.id ===
-																			exp
-																				.splits[0]
-																				.person_id,
-																	)?.name ??
-																		"未知"}{" "}
-																	代墊{" "}
-																	{formatMoney(
-																		exp.total_amount,
-																	)}
-																</p>
-															) : (
-																<p className="history-sub-desc">
-																	總額{" "}
-																	{formatMoney(
-																		exp.total_amount,
-																	)}
-																	，由 {payer}{" "}
-																	先付
-																</p>
-															)}
-														</div>
-														{/* 原本在這裡的垃圾桶按鈕已經被移除了，現在藏在滑動手勢裡！ */}
-													</div>
-
-													{!isDirectDebt && (
-														<div className="history-splits">
-															{exp.splits.map(
-																(s) => {
-																	const isPayer =
-																		s.person_id ===
-																		exp.payer_id;
-																	const name =
-																		persons.find(
-																			(
-																				p,
-																			) =>
-																				p.id ===
-																				s.person_id,
-																		)
-																			?.name ??
-																		"未知";
-																	return (
-																		<span
-																			key={
-																				s.id
-																			}
-																			className={`split-tag ${isPayer ? "tag-payer" : "tag-debtor"}`}
-																		>
-																			{
-																				name
-																			}{" "}
-																			{isPayer
-																				? "自付"
-																				: "欠"}{" "}
-																			{formatMoney(
-																				s.amount,
-																			)}
-																		</span>
-																	);
-																},
-															)}
-														</div>
-													)}
-												</div>
-											</SwipeableListItem>
-										</div>
-									);
-								})}
-							</SwipeableList>
-						)}
-					</section>
-
-					<section className="panel-card danger-panel">
-						<div className="danger-header">
-							<AlertTriangle />
-							<h2>重置這一輪</h2>
-						</div>
-						<p className="danger-desc">
-							結清後若要開始新一輪，會刪除全部成員與帳務，無法復原。
+				<header className={styles.header}>
+					<div>
+						<p className={styles.badge}>
+							<Sparkles aria-hidden="true" />
+							最少轉帳結算
 						</p>
-						<button
-							type="button"
-							disabled={busy}
-							onClick={() => {
-								const ok = window.confirm(
-									"確定要刪除所有人員與帳務資料嗎？此動作無法復原。",
-								);
-								if (!ok) return;
-								triggerHaptic.heavy();
-								run(async () => {
-									await resetAll();
-									setPayerId("");
-									setDirectPayerId("");
-									setDirectDebtorId("");
-									setSelectedParticipants([]);
-								}, "資料已全部重置");
-							}}
-							className="btn-danger-full"
-						>
-							清空所有資料
-						</button>
-					</section>
+						<h1 className={styles.title}>分帳與債務簡化</h1>
+						<p className={styles.description}>
+							記下一筆群組花費或代墊，系統會用淨額配對算出最少轉帳次數，避免大家互相還來還去。
+						</p>
+					</div>
+					<button type="button" className={styles.refresh} onClick={actions.refresh}>
+						<RefreshCw
+							className={cx(loading || busy ? styles.spin : "")}
+							aria-hidden="true"
+						/>
+						重新整理
+					</button>
+				</header>
+
+				<BalanceBoard
+					balances={sortedBalances}
+					memberCount={persons.length}
+					loading={loading}
+				/>
+
+				<div className={styles.layout}>
+					<div className={styles.column}>
+						<MemberPanel
+							persons={persons}
+							busy={busy}
+							onAdd={actions.addPerson}
+							onRemove={actions.removePerson}
+						/>
+						<ExpensePanel
+							persons={persons}
+							busy={busy}
+							onAddExpense={actions.addExpense}
+						/>
+					</div>
+
+					<div className={styles.column}>
+						<SettlementPanel
+							overview={overview}
+							savedCount={savedCount}
+							settledEveryone={settledEveryone}
+							onNotify={notify}
+						/>
+						<HistoryPanel
+							expenses={overview.expenses}
+							persons={persons}
+							onDelete={actions.removeExpense}
+						/>
+						<DangerPanel busy={busy} onReset={actions.resetAll} />
+					</div>
 				</div>
 			</div>
-			<Toast toast={toast} onClose={() => setToast(null)} />
+
+			<Toast toast={toast} onClose={dismissToast} />
 		</div>
 	);
 }
