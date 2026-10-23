@@ -1,0 +1,5927 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+new file mode 100644
+index 0000000..68541a9
+--- /dev/null
++++ b/.github/workflows/ci.yml
+@@ -0,0 +1,40 @@
++name: CI
++
++on:
++  push:
++    branches: [main]
++  pull_request:
++
++jobs:
++  backend:
++    runs-on: ubuntu-latest
++    defaults:
++      run:
++        working-directory: backend
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-python@v5
++        with:
++          python-version: "3.12"
++          cache: pip
++          cache-dependency-path: backend/requirements-dev.txt
++      - run: pip install -r requirements-dev.txt
++      - run: python -m pytest
++
++  frontend:
++    runs-on: ubuntu-latest
++    defaults:
++      run:
++        working-directory: frontend
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-node@v4
++        with:
++          node-version: 22
++          cache: npm
++          cache-dependency-path: frontend/package-lock.json
++      - run: npm ci
++      - run: npm run lint
++      - run: npm run format:check
++      - run: npm test
++      - run: npm run build
+diff --git a/.gitignore b/.gitignore
+index c772947..b089b5d 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -8,7 +8,6 @@ pnpm-debug.log*
+ lerna-debug.log*
+ 
+ node_modules
+-package-lock.json
+ dist
+ dist-ssr
+ *.local
+@@ -29,4 +28,6 @@ dist-ssr
+ __pycache__/
+ *.py[cod]
+ *$py.class
+-*.db
+\ No newline at end of file
++*.db
++*.db.bak-*
++.pytest_cache/
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..c071207
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,51 @@
++# my-app
++
++多合一工具集：**分帳簡化（dept）** 與 **Block Blast 解題**。
++前端 React + Vite（可用 Capacitor 包成手機 App），後端 FastAPI + SQLite。
++
++## 開發
++
++```bash
++# 後端（http://localhost:8000，API 文件在 /docs）
++cd backend
++pip install -r requirements-dev.txt
++uvicorn main:app --reload
++
++# 前端（http://localhost:5173）
++cd frontend
++npm install
++npm run dev
++```
++
++| 指令（frontend） | 用途 |
++| --- | --- |
++| `npm run lint` | ESLint。**JSX 禁止 inline `style`**，樣式一律寫在 `*.module.css` |
++| `npm test` | Vitest 單元測試 |
++| `npm run format` | Prettier 格式化（CI 會跑 `format:check`） |
++| `npm run build` | 正式環境打包 |
++
++後端測試：`cd backend && python -m pytest`
++
++## 設定
++
++| 變數 | 放哪裡 | 預設 | 說明 |
++| --- | --- | --- | --- |
++| `VITE_API_BASE_URL` | `frontend/.env.production` / `.env.local` | `http://localhost:8000` | 前端要連的後端網址 |
++| `CORS_ORIGINS` | 後端環境變數 | localhost:5173、Capacitor | 允許的前端來源，逗號分隔 |
++| `DEPT_DATABASE_URL` | 後端環境變數 | `backend/dept_simplification.db` | 資料庫位置 |
++
++## 專案結構與慣例
++
++```
++frontend/src
++├── components/      跨功能共用元件（BackButton、Toast）
++├── hooks/           跨功能共用 hook
++├── utils/           apiClient、haptics、saveImage…
++├── styles/          tokens.css（設計代幣）、reset.css
++├── pages/Home/
++└── features/<name>/ 每個功能自成一包：頁面、hook、api、純函式、*.module.css
++```
++
++- 樣式使用 **CSS Modules**；狀態變化用 `data-*` / `aria-*` 屬性，不用 inline style。
++- 金額在前後端一律以**整數「分」**傳遞與儲存，只有顯示時才轉成元。
++- 後端啟動時會自動升級舊資料庫（並先備份成 `*.db.bak-時間`）。
+diff --git a/backend/main.py b/backend/main.py
+index da64de7..a5d8935 100644
+--- a/backend/main.py
++++ b/backend/main.py
+@@ -1,22 +1,46 @@
++import os
++from contextlib import asynccontextmanager
++
+ from fastapi import FastAPI
+ from fastapi.middleware.cors import CORSMiddleware
+ 
+ from routers.block_blast_solver.router import router as blast_router
++from routers.dept_simplification.migrations import init_db
+ from routers.dept_simplification.router import router as dept_router
+ 
+-app = FastAPI(title="My Multi-Tool API")
++# 允許的前端來源，逗號分隔。預設涵蓋 Vite 開發伺服器與 Capacitor（Android / iOS）。
++# 部署時請用環境變數覆蓋，例如：CORS_ORIGINS=https://my-app.example.com
++DEFAULT_ORIGINS = (
++    "http://localhost:5173,http://127.0.0.1:5173,"
++    "http://localhost,capacitor://localhost"
++)
++ALLOWED_ORIGINS = [
++    origin.strip()
++    for origin in os.getenv("CORS_ORIGINS", DEFAULT_ORIGINS).split(",")
++    if origin.strip()
++]
++
++
++@asynccontextmanager
++async def lifespan(_app: FastAPI):
++    init_db()
++    yield
++
++
++app = FastAPI(title="My Multi-Tool API", lifespan=lifespan)
+ 
+ app.add_middleware(
+     CORSMiddleware,
+-    allow_origins=["*"],
+-    allow_credentials=True,
+-    allow_methods=["*"],
++    allow_origins=ALLOWED_ORIGINS,
++    # 這個 API 不使用 cookie，不需要 credentials；
++    # 而且 credentials 搭配 "*" 本來就是不合法的組合
++    allow_credentials=False,
++    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+     allow_headers=["*"],
+ )
+ 
+ app.include_router(blast_router, prefix="/api/blast", tags=["Block Blast"])
+-app.include_router(dept_router, prefix="/api/dept",
+-                   tags=["Dept Simplification"])
++app.include_router(dept_router, prefix="/api/dept", tags=["Dept Simplification"])
+ 
+ 
+ @app.get("/")
+diff --git a/backend/pytest.ini b/backend/pytest.ini
+new file mode 100644
+index 0000000..c7b23ec
+--- /dev/null
++++ b/backend/pytest.ini
+@@ -0,0 +1,3 @@
++[pytest]
++pythonpath = .
++testpaths = tests
+diff --git a/backend/requirements-dev.txt b/backend/requirements-dev.txt
+new file mode 100644
+index 0000000..9b5d281
+--- /dev/null
++++ b/backend/requirements-dev.txt
+@@ -0,0 +1,3 @@
++-r requirements.txt
++pytest==9.1.1
++httpx==0.28.1
+diff --git a/backend/requirements.txt b/backend/requirements.txt
+index a68f31e..4fd932a 100644
+--- a/backend/requirements.txt
++++ b/backend/requirements.txt
+@@ -1,18 +1,19 @@
+-annotated-doc
+-annotated-types
+-anyio
+-click
+-fastapi
+-greenlet
+-h11
+-idna
+-pydantic
+-pydantic_core
+-SQLAlchemy
+-starlette
+-typing-inspection
+-typing_extensions
+-uvicorn
+-opencv-python-headless
+- numpy
+- python-multipart
+\ No newline at end of file
++# 以 Python 3.12 測試通過的版本釘住，避免日後重新安裝時行為改變
++annotated-doc==0.0.5
++annotated-types==0.8.0
++anyio==4.15.1
++click==8.3.1
++fastapi==0.161.1
++greenlet==3.3.2
++h11==0.16.0
++idna==3.11
++numpy==2.4.4
++opencv-python-headless==4.13.0.92
++pydantic==2.14.1
++pydantic_core==2.50.1
++python-multipart==0.0.32
++SQLAlchemy==2.1.6
++starlette==1.9.0
++typing-inspection==0.4.4
++typing_extensions==4.16.0
++uvicorn==0.54.0
+diff --git a/backend/routers/block_blast_solver/router.py b/backend/routers/block_blast_solver/router.py
+index cd35096..5cf9c39 100644
+--- a/backend/routers/block_blast_solver/router.py
++++ b/backend/routers/block_blast_solver/router.py
+@@ -1,74 +1,16 @@
+-from fastapi import FastAPI, HTTPException, APIRouter, File, UploadFile
+-from fastapi.middleware.cors import CORSMiddleware
+-from pydantic import BaseModel
+-from typing import List
+-import sqlite3
+-import json
+ import itertools
++from typing import List
++
+ import cv2
+ import numpy as np
++from fastapi import APIRouter, File, HTTPException, UploadFile
++from pydantic import BaseModel
++
++from .shapes import SHAPES, SHAPES_BY_ID
+ 
+ router = APIRouter()
+ 
+-# ----------------- 資料庫初始化 (SQLite) -----------------
+-
+-DB_FILE = "blocks.db"
+-
+-
+-def init_db():
+-    conn = sqlite3.connect(DB_FILE)
+-    cursor = conn.cursor()
+-
+-    # 開發階段專用：每次重啟都強制清空舊表，這樣就不用手動刪除 blocks.db 了！
+-    cursor.execute('DROP TABLE IF EXISTS shapes')
+-
+-    cursor.execute('''
+-        CREATE TABLE shapes (
+-            id INTEGER PRIMARY KEY,
+-            name TEXT,
+-            matrix TEXT
+-        )
+-    ''')
+-
+-    default_shapes = [
+-        (1, "單格", "[[1]]"),
+-        (2, "2x2 方塊", "[[1,1],[1,1]]"),
+-        (3, "3x3 方塊", "[[1,1,1],[1,1,1],[1,1,1]]"),
+-        (4, "橫條 (1x2)", "[[1,1]]"),
+-        (5, "直條 (2x1)", "[[1],[1]]"),
+-        (6, "橫條 (1x3)", "[[1,1,1]]"),
+-        (7, "直條 (3x1)", "[[1],[1],[1]]"),
+-        (8, "橫條 (1x4)", "[[1,1,1,1]]"),
+-        (9, "直條 (4x1)", "[[1],[1],[1],[1]]"),
+-        (10, "橫條 (1x5)", "[[1,1,1,1,1]]"),
+-        (11, "直條 (5x1)", "[[1],[1],[1],[1],[1]]"),
+-        (12, "T型 (上)", "[[0,1,0],[1,1,1]]"),
+-        (13, "T型 (下)", "[[1,1,1],[0,1,0]]"),
+-        (14, "T型 (右)", "[[1,0],[1,1],[1,0]]"),
+-        (15, "T型 (左)", "[[0,1],[1,1],[0,1]]"),
+-        (16, "Z型(左)", "[[1, 1, 0], [0, 1, 1]]"),
+-        (17, "Z型(右)", "[[0, 1, 1], [1, 1, 0]]"),
+-        (18, "勾型(右上)", "[[0, 0, 1], [1, 1, 1]]"),
+-        (19, "勾型(右下)", "[[1, 1, 1], [0, 0, 1]]"),
+-        (20, "勾型(左上)", "[[1, 0, 0], [1, 1, 1]]"),
+-        (21, "勾型(左下)", "[[1, 1, 1], [1, 0, 0]]"),
+-        (22, "小L(右上)", "[[1, 1],[0, 1]]"),
+-        (23, "小L(右下)", "[[0, 1],[1, 1]]"),
+-        (24, "小L(左上)", "[[1, 1],[1, 0]]"),
+-        (25, "小L(左下)", "[[1, 0],[1, 1]]"),
+-        (26, "大L(右上)", "[[1, 1, 1],[0, 0, 1],[0, 0, 1]]"),
+-        (27, "大L(右下)", "[[0, 0, 1],[0, 0, 1],[1, 1, 1]]"),
+-        (28, "大L(左上)", "[[1, 1, 1],[1, 0, 0],[1, 0, 0]]"),
+-        (29, "大L(左下)", "[[1, 0, 0],[1, 0, 0],[1, 1, 1]]"),
+-    ]
+-
+-    cursor.executemany(
+-        "INSERT INTO shapes (id, name, matrix) VALUES (?, ?, ?)", default_shapes)
+-    conn.commit()
+-    conn.close()
+-
+-
+-init_db()
++BOARD_SIZE = 8
+ 
+ # ----------------- 資料模型 (Pydantic) -----------------
+ 
+@@ -78,34 +20,20 @@ class SolveRequest(BaseModel):
+     block_ids: List[int]    # 3個方塊的 ID
+ 
+ 
+-class CustomBlock(BaseModel):
+-    id: str
+-    matrix: List[List[int]]
+-
+-
+-class solveRequest(BaseModel):
+-    board: List[List[int]]
+-    block_ids: List[int]
+-    custom_block: List[CustomBlock] = []
+-
+ # ----------------- 核心演算法 -----------------
+ 
+ 
+ def get_block_matrix(block_id: int) -> List[List[int]]:
+-    conn = sqlite3.connect(DB_FILE)
+-    cursor = conn.cursor()
+-    cursor.execute("SELECT matrix FROM shapes WHERE id = ?", (block_id,))
+-    row = cursor.fetchone()
+-    conn.close()
+-    if not row:
++    shape = SHAPES_BY_ID.get(block_id)
++    if shape is None:
+         raise HTTPException(status_code=404, detail=f"找不到方塊 ID {block_id}")
+-    return json.loads(row[0])
++    return shape["matrix"]
+ 
+ 
+ def can_place(board, block, r, c):
+     """檢查方塊是否能放在指定位置"""
+     bh, bw = len(block), len(block[0])
+-    if r + bh > 8 or c + bw > 8:
++    if r + bh > BOARD_SIZE or c + bw > BOARD_SIZE:
+         return False
+     for i in range(bh):
+         for j in range(bw):
+@@ -155,22 +83,18 @@ def evaluate_board(board, lines_cleared):
+ 
+ @router.get("/blocks")
+ def get_all_blocks():
+-    conn = sqlite3.connect(DB_FILE)
+-    cursor = conn.cursor()
+-    cursor.execute("SELECT id, name, matrix FROM shapes")
+-    rows = cursor.fetchall()
+-    conn.close()
+-    return [{"id": r[0], "name": r[1], "matrix": json.loads(r[2])} for r in rows]
++    return SHAPES
+ 
+ 
+ @router.post("/recognize")
+-async def recognize_screenshot(file: UploadFile = File(...)):
+-    if not file.content_type.startswith("image/"):
++def recognize_screenshot(file: UploadFile = File(...)):
++    # 用一般 def：OpenCV 運算很吃 CPU，交給 threadpool 才不會卡住整個伺服器
++    if not (file.content_type or "").startswith("image/"):
+         raise HTTPException(status_code=400, detail="請上傳圖片檔案")
+ 
+     try:
+         # 1. 讀取上傳的圖片轉為 OpenCV 格式
+-        contents = await file.read()
++        contents = file.file.read()
+         nparr = np.frombuffer(contents, np.uint8)
+         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+         if img is None:
+@@ -241,6 +165,9 @@ async def recognize_screenshot(file: UploadFile = File(...)):
+ 
+         return {"status": "success", "board": board_matrix}
+ 
++    except HTTPException:
++        # 自己丟出的 4xx 要原樣回傳，不能被下面包成 500
++        raise
+     except Exception as e:
+         raise HTTPException(status_code=500, detail=str(e))
+ 
+diff --git a/backend/routers/block_blast_solver/shapes.py b/backend/routers/block_blast_solver/shapes.py
+new file mode 100644
+index 0000000..0464011
+--- /dev/null
++++ b/backend/routers/block_blast_solver/shapes.py
+@@ -0,0 +1,41 @@
++"""內建方塊形狀。原本放在每次啟動都會 DROP 重建的 SQLite 裡，其實只是常數。"""
++
++import json
++
++_RAW_SHAPES = [
++    (1, "單格", "[[1]]"),
++    (2, "2x2 方塊", "[[1,1],[1,1]]"),
++    (3, "3x3 方塊", "[[1,1,1],[1,1,1],[1,1,1]]"),
++    (4, "橫條 (1x2)", "[[1,1]]"),
++    (5, "直條 (2x1)", "[[1],[1]]"),
++    (6, "橫條 (1x3)", "[[1,1,1]]"),
++    (7, "直條 (3x1)", "[[1],[1],[1]]"),
++    (8, "橫條 (1x4)", "[[1,1,1,1]]"),
++    (9, "直條 (4x1)", "[[1],[1],[1],[1]]"),
++    (10, "橫條 (1x5)", "[[1,1,1,1,1]]"),
++    (11, "直條 (5x1)", "[[1],[1],[1],[1],[1]]"),
++    (12, "T型 (上)", "[[0,1,0],[1,1,1]]"),
++    (13, "T型 (下)", "[[1,1,1],[0,1,0]]"),
++    (14, "T型 (右)", "[[1,0],[1,1],[1,0]]"),
++    (15, "T型 (左)", "[[0,1],[1,1],[0,1]]"),
++    (16, "Z型(左)", "[[1, 1, 0], [0, 1, 1]]"),
++    (17, "Z型(右)", "[[0, 1, 1], [1, 1, 0]]"),
++    (18, "勾型(右上)", "[[0, 0, 1], [1, 1, 1]]"),
++    (19, "勾型(右下)", "[[1, 1, 1], [0, 0, 1]]"),
++    (20, "勾型(左上)", "[[1, 0, 0], [1, 1, 1]]"),
++    (21, "勾型(左下)", "[[1, 1, 1], [1, 0, 0]]"),
++    (22, "小L(右上)", "[[1, 1],[0, 1]]"),
++    (23, "小L(右下)", "[[0, 1],[1, 1]]"),
++    (24, "小L(左上)", "[[1, 1],[1, 0]]"),
++    (25, "小L(左下)", "[[1, 0],[1, 1]]"),
++    (26, "大L(右上)", "[[1, 1, 1],[0, 0, 1],[0, 0, 1]]"),
++    (27, "大L(右下)", "[[0, 0, 1],[0, 0, 1],[1, 1, 1]]"),
++    (28, "大L(左上)", "[[1, 1, 1],[1, 0, 0],[1, 0, 0]]"),
++    (29, "大L(左下)", "[[1, 0, 0],[1, 0, 0],[1, 1, 1]]"),
++]
++
++SHAPES = [
++    {"id": shape_id, "name": name, "matrix": json.loads(matrix)}
++    for shape_id, name, matrix in _RAW_SHAPES
++]
++SHAPES_BY_ID = {shape["id"]: shape for shape in SHAPES}
+diff --git a/backend/routers/dept_simplification/database.py b/backend/routers/dept_simplification/database.py
+index 7ad1dc9..366cde5 100644
+--- a/backend/routers/dept_simplification/database.py
++++ b/backend/routers/dept_simplification/database.py
+@@ -1,11 +1,34 @@
+-from sqlalchemy import create_engine
+-from sqlalchemy.orm import sessionmaker, declarative_base
++import os
++from pathlib import Path
+ 
+-SQLALCHEMY_DATABASE_URL = "sqlite:///./dept_simplification.db"
++from sqlalchemy import create_engine, event
++from sqlalchemy.orm import declarative_base, sessionmaker
++from sqlalchemy.pool import StaticPool
++
++# 資料庫預設放在 backend/ 底下，不再依賴「從哪個資料夾啟動 uvicorn」。
++BACKEND_DIR = Path(__file__).resolve().parents[2]
++DATABASE_URL = os.getenv(
++    "DEPT_DATABASE_URL", f"sqlite:///{BACKEND_DIR / 'dept_simplification.db'}"
++)
++
++_IN_MEMORY = DATABASE_URL in ("sqlite://", "sqlite:///:memory:")
+ 
+ engine = create_engine(
+-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
++    DATABASE_URL,
++    connect_args={"check_same_thread": False},
++    # 記憶體資料庫（測試用）必須共用同一條連線，否則每條連線都是空的資料庫
++    **({"poolclass": StaticPool} if _IN_MEMORY else {}),
+ )
++
++
++@event.listens_for(engine, "connect")
++def _enable_foreign_keys(dbapi_connection, _record):
++    # SQLite 預設不檢查外鍵，這裡打開才會真的擋下違規資料
++    cursor = dbapi_connection.cursor()
++    cursor.execute("PRAGMA foreign_keys=ON")
++    cursor.close()
++
++
+ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+ 
+ Base = declarative_base()
+diff --git a/backend/routers/dept_simplification/migrations.py b/backend/routers/dept_simplification/migrations.py
+new file mode 100644
+index 0000000..9ce4d86
+--- /dev/null
++++ b/backend/routers/dept_simplification/migrations.py
+@@ -0,0 +1,90 @@
++"""啟動時把資料庫升級到最新結構。
++
++舊版（沒有旅程、金額是 Float）的資料會被搬進一個「預設旅程」，
++金額從元轉成整數分。升級前會先備份資料庫檔案。
++"""
++
++import shutil
++from datetime import datetime
++
++from sqlalchemy import inspect, text
++
++from . import models
++from .database import DATABASE_URL, SessionLocal, engine
++
++DEFAULT_TRIP_NAME = "預設旅程"
++
++_LEGACY_INDEXES = (
++    "ix_persons_id",
++    "ix_persons_name",
++    "ix_expenses_id",
++    "ix_expense_splits_id",
++)
++
++
++def _is_legacy_schema() -> bool:
++    inspector = inspect(engine)
++    if "persons" not in inspector.get_table_names():
++        return False
++    columns = {c["name"] for c in inspector.get_columns("persons")}
++    return "trip_id" not in columns
++
++
++def _backup_database_file():
++    prefix = "sqlite:///"
++    if not DATABASE_URL.startswith(prefix) or DATABASE_URL.endswith(":memory:"):
++        return None
++    path = DATABASE_URL[len(prefix):]
++    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
++    backup = f"{path}.bak-{stamp}"
++    shutil.copyfile(path, backup)
++    return backup
++
++
++def _migrate_legacy():
++    _backup_database_file()
++
++    with engine.begin() as conn:
++        for name in _LEGACY_INDEXES:
++            conn.execute(text(f"DROP INDEX IF EXISTS {name}"))
++        for table in ("expense_splits", "expenses", "persons"):
++            conn.execute(text(f"ALTER TABLE {table} RENAME TO legacy_{table}"))
++
++        models.Base.metadata.create_all(conn)
++
++        has_data = conn.execute(text("SELECT COUNT(*) FROM legacy_persons")).scalar()
++        if has_data:
++            trip_id = conn.execute(
++                text("INSERT INTO trips (name, created_at) VALUES (:n, CURRENT_TIMESTAMP)"),
++                {"n": DEFAULT_TRIP_NAME},
++            ).lastrowid
++            conn.execute(
++                text("INSERT INTO persons (id, trip_id, name) "
++                     "SELECT id, :t, name FROM legacy_persons"),
++                {"t": trip_id},
++            )
++            conn.execute(
++                text("INSERT INTO expenses (id, trip_id, description, total_cents, payer_id) "
++                     "SELECT id, :t, description, CAST(ROUND(total_amount * 100) AS INTEGER), payer_id "
++                     "FROM legacy_expenses"),
++                {"t": trip_id},
++            )
++            conn.execute(
++                text("INSERT INTO expense_splits (id, expense_id, person_id, amount_cents) "
++                     "SELECT id, expense_id, person_id, CAST(ROUND(amount * 100) AS INTEGER) "
++                     "FROM legacy_expense_splits")
++            )
++
++        for table in ("expense_splits", "expenses", "persons"):
++            conn.execute(text(f"DROP TABLE legacy_{table}"))
++
++
++def init_db():
++    if _is_legacy_schema():
++        _migrate_legacy()
++    models.Base.metadata.create_all(bind=engine)
++
++    with SessionLocal() as db:
++        if db.query(models.Trip.id).first() is None:
++            db.add(models.Trip(name=DEFAULT_TRIP_NAME))
++            db.commit()
+diff --git a/backend/routers/dept_simplification/models.py b/backend/routers/dept_simplification/models.py
+index 0bdfefe..50dba79 100644
+--- a/backend/routers/dept_simplification/models.py
++++ b/backend/routers/dept_simplification/models.py
+@@ -1,21 +1,59 @@
+-from sqlalchemy import Column, Integer, String, Float, ForeignKey
++from datetime import datetime, timezone
++
++from sqlalchemy import (
++    Column,
++    DateTime,
++    ForeignKey,
++    Integer,
++    String,
++    UniqueConstraint,
++)
+ from sqlalchemy.orm import relationship
++
+ from .database import Base
+ 
+ 
++def _utcnow():
++    return datetime.now(timezone.utc)
++
++
++class Trip(Base):
++    """一個獨立的帳本（例如「日本五日遊」）。成員與帳務都屬於某個旅程。"""
++
++    __tablename__ = "trips"
++    id = Column(Integer, primary_key=True)
++    name = Column(String(60), nullable=False)
++    created_at = Column(DateTime, default=_utcnow, nullable=False)
++
++    persons = relationship(
++        "Person", back_populates="trip", cascade="all, delete-orphan"
++    )
++    expenses = relationship(
++        "Expense", back_populates="trip", cascade="all, delete-orphan"
++    )
++
++
+ class Person(Base):
+     __tablename__ = "persons"
+-    id = Column(Integer, primary_key=True, index=True)
+-    name = Column(String, unique=True, index=True, nullable=False)
++    __table_args__ = (UniqueConstraint("trip_id", "name", name="uq_person_trip_name"),)
++
++    id = Column(Integer, primary_key=True)
++    trip_id = Column(Integer, ForeignKey("trips.id"), nullable=False, index=True)
++    name = Column(String, nullable=False)
++
++    trip = relationship("Trip", back_populates="persons")
+ 
+ 
+ class Expense(Base):
+     __tablename__ = "expenses"
+-    id = Column(Integer, primary_key=True, index=True)
++    id = Column(Integer, primary_key=True)
++    trip_id = Column(Integer, ForeignKey("trips.id"), nullable=False, index=True)
+     description = Column(String, nullable=False)
+-    total_amount = Column(Float, nullable=False)
++    # 金額一律以「分」為單位的整數儲存，避免浮點數誤差
++    total_cents = Column(Integer, nullable=False)
+     payer_id = Column(Integer, ForeignKey("persons.id"), nullable=False)
+ 
++    trip = relationship("Trip", back_populates="expenses")
+     splits = relationship(
+         "ExpenseSplit",
+         back_populates="expense",
+@@ -25,9 +63,9 @@ class Expense(Base):
+ 
+ class ExpenseSplit(Base):
+     __tablename__ = "expense_splits"
+-    id = Column(Integer, primary_key=True, index=True)
+-    expense_id = Column(Integer, ForeignKey("expenses.id"), nullable=False)
++    id = Column(Integer, primary_key=True)
++    expense_id = Column(Integer, ForeignKey("expenses.id"), nullable=False, index=True)
+     person_id = Column(Integer, ForeignKey("persons.id"), nullable=False)
+-    amount = Column(Float, nullable=False)
++    amount_cents = Column(Integer, nullable=False)
+ 
+     expense = relationship("Expense", back_populates="splits")
+diff --git a/backend/routers/dept_simplification/router.py b/backend/routers/dept_simplification/router.py
+index 9fce052..8af69a7 100644
+--- a/backend/routers/dept_simplification/router.py
++++ b/backend/routers/dept_simplification/router.py
+@@ -1,72 +1,70 @@
+-from fastapi import Depends, HTTPException, APIRouter
+-from sqlalchemy.orm import Session, joinedload
++from fastapi import APIRouter, Depends, HTTPException
+ from sqlalchemy.exc import IntegrityError
++from sqlalchemy.orm import Session, joinedload
+ 
+-from . import models
+-from . import schemas
+-from . import settlement
+-from .database import engine, get_db
+-
+-models.Base.metadata.create_all(bind=engine)
++from . import models, schemas, settlement
++from .database import get_db
+ 
+ router = APIRouter()
+ 
+ 
+-def _person_ids(db: Session) -> set[int]:
+-    return {row[0] for row in db.query(models.Person.id).all()}
++# ---------------------------------------------------------------- helpers
++
++def _get_trip(db: Session, trip_id: int) -> models.Trip:
++    trip = db.get(models.Trip, trip_id)
++    if trip is None:
++        raise HTTPException(status_code=404, detail="找不到這個旅程")
++    return trip
+ 
+ 
+-def _validate_expense_payload(expense: schemas.ExpenseCreate, known_ids: set[int]):
++def _validate_expense(expense: schemas.ExpenseCreate, known_ids: set[int]):
+     if expense.payer_id not in known_ids:
+         raise HTTPException(status_code=400, detail="付款人不存在")
+ 
+     split_ids = [s.person_id for s in expense.splits]
+     if len(split_ids) != len(set(split_ids)):
+         raise HTTPException(status_code=400, detail="同一筆消費不可重複分攤同一人")
+-
+-    unknown = [pid for pid in split_ids if pid not in known_ids]
+-    if unknown:
++    if any(pid not in known_ids for pid in split_ids):
+         raise HTTPException(status_code=400, detail="分攤名單含有不存在的成員")
+ 
+-    total_cents = settlement.to_cents(expense.total_amount)
+-    split_cents = sum(settlement.to_cents(s.amount) for s in expense.splits)
+-    if abs(total_cents - split_cents) > 1:
+-        raise HTTPException(
+-            status_code=400,
+-            detail="分攤金額加總必須等於總額",
+-        )
++    if sum(s.amount_cents for s in expense.splits) != expense.total_cents:
++        raise HTTPException(status_code=400, detail="分攤金額加總必須等於總額")
+ 
+ 
+-def _build_overview(db: Session) -> schemas.OverviewResponse:
+-    persons = db.query(models.Person).order_by(models.Person.id).all()
++def _build_overview(db: Session, trip: models.Trip) -> schemas.OverviewResponse:
++    persons = (
++        db.query(models.Person)
++        .filter(models.Person.trip_id == trip.id)
++        .order_by(models.Person.id)
++        .all()
++    )
+     expenses = (
+         db.query(models.Expense)
+         .options(joinedload(models.Expense.splits))
++        .filter(models.Expense.trip_id == trip.id)
+         .order_by(models.Expense.id.desc())
+         .all()
+     )
+ 
+     names = {p.id: p.name for p in persons}
+-    balances_cents = settlement.net_balances_cents(persons, expenses)
+-    transfers = settlement.simplify_transfers(balances_cents)
+-
+-    original_edges = 0
+-    for exp in expenses:
+-        payer = exp.payer_id
+-        for split in exp.splits:
+-            if split.person_id != payer and settlement.to_cents(split.amount) > 0:
+-                original_edges += 1
++    balances = settlement.net_balances_cents(persons, expenses)
++    transfers = settlement.simplify_transfers(balances)
++
++    # 「原本約幾筆往來」= 每筆消費中，非付款人且金額大於 0 的分攤數
++    original_edges = sum(
++        1
++        for exp in expenses
++        for split in exp.splits
++        if split.person_id != exp.payer_id and split.amount_cents > 0
++    )
+ 
+     return schemas.OverviewResponse(
++        trip=trip,
+         persons=persons,
+         expenses=expenses,
+         balances=[
+-            schemas.BalanceResponse(
+-                person_id=pid,
+-                name=names[pid],
+-                amount=settlement.from_cents(amount),
+-            )
+-            for pid, amount in balances_cents.items()
++            schemas.BalanceResponse(person_id=pid, name=names[pid], amount_cents=cents)
++            for pid, cents in balances.items()
+         ],
+         settlements=[
+             schemas.SettlementResponse(
+@@ -74,7 +72,7 @@ def _build_overview(db: Session) -> schemas.OverviewResponse:
+                 to_id=to_id,
+                 from_person=names[from_id],
+                 to_person=names[to_id],
+-                amount=settlement.from_cents(cents),
++                amount_cents=cents,
+             )
+             for from_id, to_id, cents in transfers
+         ],
+@@ -83,123 +81,147 @@ def _build_overview(db: Session) -> schemas.OverviewResponse:
+     )
+ 
+ 
++# ------------------------------------------------------------------ trips
++
+ @router.get("/health")
+ def health():
+     return {"ok": True}
+ 
+ 
+-@router.post("/persons/", response_model=schemas.PersonResponse)
+-def create_person(person: schemas.PersonBase, db: Session = Depends(get_db)):
+-    db_person = models.Person(name=person.name)
+-    db.add(db_person)
++@router.get("/trips/", response_model=list[schemas.TripResponse])
++def list_trips(db: Session = Depends(get_db)):
++    return db.query(models.Trip).order_by(models.Trip.id).all()
++
++
++@router.post("/trips/", response_model=schemas.TripResponse, status_code=201)
++def create_trip(payload: schemas.TripCreate, db: Session = Depends(get_db)):
++    trip = models.Trip(name=payload.name)
++    db.add(trip)
++    db.commit()
++    db.refresh(trip)
++    return trip
++
++
++@router.delete("/trips/{trip_id}", response_model=schemas.MessageResponse)
++def delete_trip(trip_id: int, db: Session = Depends(get_db)):
++    trip = _get_trip(db, trip_id)
++    _clear_trip(db, trip)
++    db.delete(trip)
++    db.commit()
++    return schemas.MessageResponse(message="已刪除旅程")
++
++
++def _clear_trip(db: Session, trip: models.Trip):
++    """依外鍵順序清空旅程內的帳務與成員。"""
++    expense_ids = db.query(models.Expense.id).filter(models.Expense.trip_id == trip.id)
++    db.query(models.ExpenseSplit).filter(
++        models.ExpenseSplit.expense_id.in_(expense_ids)
++    ).delete(synchronize_session=False)
++    db.query(models.Expense).filter(models.Expense.trip_id == trip.id).delete(
++        synchronize_session=False
++    )
++    db.query(models.Person).filter(models.Person.trip_id == trip.id).delete(
++        synchronize_session=False
++    )
++
++
++# ------------------------------------------------- trip contents (overview)
++# 所有「會改動資料」的端點都直接回傳最新的 overview，前端不用再多打一次 GET。
++
++@router.get("/trips/{trip_id}/overview/", response_model=schemas.OverviewResponse)
++def get_overview(trip_id: int, db: Session = Depends(get_db)):
++    return _build_overview(db, _get_trip(db, trip_id))
++
++
++@router.post("/trips/{trip_id}/persons/", response_model=schemas.OverviewResponse)
++def create_person(
++    trip_id: int, person: schemas.PersonBase, db: Session = Depends(get_db)
++):
++    trip = _get_trip(db, trip_id)
++    db.add(models.Person(trip_id=trip.id, name=person.name))
+     try:
+         db.commit()
+     except IntegrityError:
+         db.rollback()
+         raise HTTPException(status_code=409, detail="這個名字已經存在")
+-    db.refresh(db_person)
+-    return db_person
++    return _build_overview(db, trip)
+ 
+ 
+-@router.get("/persons/", response_model=list[schemas.PersonResponse])
+-def get_persons(db: Session = Depends(get_db)):
+-    return db.query(models.Person).order_by(models.Person.id).all()
+-
+-
+-@router.delete("/persons/{person_id}", response_model=schemas.MessageResponse)
+-def delete_person(person_id: int, db: Session = Depends(get_db)):
+-    person = db.query(models.Person).filter(
+-        models.Person.id == person_id).first()
+-    if not person:
++@router.delete(
++    "/trips/{trip_id}/persons/{person_id}", response_model=schemas.OverviewResponse
++)
++def delete_person(trip_id: int, person_id: int, db: Session = Depends(get_db)):
++    trip = _get_trip(db, trip_id)
++    person = (
++        db.query(models.Person)
++        .filter(models.Person.id == person_id, models.Person.trip_id == trip.id)
++        .first()
++    )
++    if person is None:
+         raise HTTPException(status_code=404, detail="找不到這位成員")
+ 
+-    used_as_payer = (
+-        db.query(models.Expense.id).filter(
+-            models.Expense.payer_id == person_id).first()
+-    )
+-    used_in_split = (
+-        db.query(models.ExpenseSplit.id)
++    used = (
++        db.query(models.Expense.id).filter(models.Expense.payer_id == person_id).first()
++        or db.query(models.ExpenseSplit.id)
+         .filter(models.ExpenseSplit.person_id == person_id)
+         .first()
+     )
+-    if used_as_payer or used_in_split:
++    if used:
+         raise HTTPException(status_code=400, detail="此成員已有帳務，無法刪除")
+ 
+     db.delete(person)
+     db.commit()
+-    return schemas.MessageResponse(message="已移除成員")
+-
+-
+-@router.post("/expenses/", response_model=schemas.ExpenseResponse)
+-def create_expense(expense: schemas.ExpenseCreate, db: Session = Depends(get_db)):
+-    _validate_expense_payload(expense, _person_ids(db))
+-
+-    db_expense = models.Expense(
+-        description=expense.description,
+-        total_amount=settlement.from_cents(
+-            settlement.to_cents(expense.total_amount)),
+-        payer_id=expense.payer_id,
+-    )
+-    db.add(db_expense)
+-    db.flush()
+-
+-    for split in expense.splits:
+-        db.add(
+-            models.ExpenseSplit(
+-                expense_id=db_expense.id,
+-                person_id=split.person_id,
+-                amount=settlement.from_cents(
+-                    settlement.to_cents(split.amount)),
+-            )
++    return _build_overview(db, trip)
++
++
++@router.post("/trips/{trip_id}/expenses/", response_model=schemas.OverviewResponse)
++def create_expense(
++    trip_id: int, expense: schemas.ExpenseCreate, db: Session = Depends(get_db)
++):
++    trip = _get_trip(db, trip_id)
++    known_ids = {
++        row[0]
++        for row in db.query(models.Person.id).filter(models.Person.trip_id == trip.id)
++    }
++    _validate_expense(expense, known_ids)
++
++    db.add(
++        models.Expense(
++            trip_id=trip.id,
++            description=expense.description,
++            total_cents=expense.total_cents,
++            payer_id=expense.payer_id,
++            splits=[
++                models.ExpenseSplit(person_id=s.person_id, amount_cents=s.amount_cents)
++                for s in expense.splits
++            ],
+         )
+-    db.commit()
+-    db.refresh(db_expense)
+-    db_expense = (
+-        db.query(models.Expense)
+-        .options(joinedload(models.Expense.splits))
+-        .filter(models.Expense.id == db_expense.id)
+-        .one()
+-    )
+-    return db_expense
+-
+-
+-@router.get("/expenses/", response_model=list[schemas.ExpenseResponse])
+-def get_expenses(db: Session = Depends(get_db)):
+-    return (
+-        db.query(models.Expense)
+-        .options(joinedload(models.Expense.splits))
+-        .order_by(models.Expense.id.desc())
+-        .all()
+     )
++    db.commit()
++    return _build_overview(db, trip)
+ 
+ 
+-@router.delete("/expenses/{expense_id}", response_model=schemas.MessageResponse)
+-def delete_expense(expense_id: int, db: Session = Depends(get_db)):
++@router.delete(
++    "/trips/{trip_id}/expenses/{expense_id}", response_model=schemas.OverviewResponse
++)
++def delete_expense(trip_id: int, expense_id: int, db: Session = Depends(get_db)):
++    trip = _get_trip(db, trip_id)
+     expense = (
+-        db.query(models.Expense).filter(
+-            models.Expense.id == expense_id).first()
++        db.query(models.Expense)
++        .filter(models.Expense.id == expense_id, models.Expense.trip_id == trip.id)
++        .first()
+     )
+-    if not expense:
++    if expense is None:
+         raise HTTPException(status_code=404, detail="找不到這筆消費")
+     db.delete(expense)
+     db.commit()
+-    return schemas.MessageResponse(message="已刪除消費紀錄")
+-
+-
+-@router.get("/settle/", response_model=list[schemas.SettlementResponse])
+-def calculate_settlement(db: Session = Depends(get_db)):
+-    return _build_overview(db).settlements
+-
+-
+-@router.get("/overview/", response_model=schemas.OverviewResponse)
+-def get_overview(db: Session = Depends(get_db)):
+-    return _build_overview(db)
++    return _build_overview(db, trip)
+ 
+ 
+-@router.delete("/reset/", response_model=schemas.MessageResponse)
+-def reset_database(db: Session = Depends(get_db)):
+-    db.query(models.ExpenseSplit).delete()
+-    db.query(models.Expense).delete()
+-    db.query(models.Person).delete()
++@router.delete("/trips/{trip_id}/data/", response_model=schemas.OverviewResponse)
++def reset_trip(trip_id: int, db: Session = Depends(get_db)):
++    """清空這個旅程的成員與帳務（旅程本身保留）。"""
++    trip = _get_trip(db, trip_id)
++    _clear_trip(db, trip)
+     db.commit()
+-    return schemas.MessageResponse(message="資料庫已全部清空")
++    return _build_overview(db, trip)
+diff --git a/backend/routers/dept_simplification/schemas.py b/backend/routers/dept_simplification/schemas.py
+index 6cd851c..f620e68 100644
+--- a/backend/routers/dept_simplification/schemas.py
++++ b/backend/routers/dept_simplification/schemas.py
+@@ -1,6 +1,31 @@
+-from pydantic import BaseModel, ConfigDict, Field, field_validator
+ from typing import List, Optional
+ 
++from pydantic import BaseModel, ConfigDict, Field, field_validator
++
++# 金額一律是「分」的整數。上限約 1 億元，擋掉明顯的輸入錯誤。
++MAX_CENTS = 10_000_000_000
++
++
++def _clean_text(value: str, empty_message: str) -> str:
++    cleaned = value.strip()
++    if not cleaned:
++        raise ValueError(empty_message)
++    return cleaned
++
++
++class TripCreate(BaseModel):
++    name: str = Field(min_length=1, max_length=60)
++
++    @field_validator("name")
++    @classmethod
++    def strip_name(cls, value: str) -> str:
++        return _clean_text(value, "旅程名稱不可為空白")
++
++
++class TripResponse(TripCreate):
++    id: int
++    model_config = ConfigDict(from_attributes=True)
++
+ 
+ class PersonBase(BaseModel):
+     name: str = Field(min_length=1, max_length=40)
+@@ -8,10 +33,7 @@ class PersonBase(BaseModel):
+     @field_validator("name")
+     @classmethod
+     def strip_name(cls, value: str) -> str:
+-        cleaned = value.strip()
+-        if not cleaned:
+-            raise ValueError("名字不可為空白")
+-        return cleaned
++        return _clean_text(value, "名字不可為空白")
+ 
+ 
+ class PersonResponse(PersonBase):
+@@ -21,7 +43,7 @@ class PersonResponse(PersonBase):
+ 
+ class SplitCreate(BaseModel):
+     person_id: int
+-    amount: float = Field(gt=0)
++    amount_cents: int = Field(gt=0, le=MAX_CENTS)
+ 
+ 
+ class SplitResponse(SplitCreate):
+@@ -31,20 +53,20 @@ class SplitResponse(SplitCreate):
+ 
+ class ExpenseCreate(BaseModel):
+     description: str = Field(min_length=1, max_length=80)
+-    total_amount: float = Field(gt=0)
++    total_cents: int = Field(gt=0, le=MAX_CENTS)
+     payer_id: int
+     splits: List[SplitCreate] = Field(min_length=1)
+ 
+     @field_validator("description")
+     @classmethod
+     def strip_description(cls, value: str) -> str:
+-        return value.strip()
++        return _clean_text(value, "用途不可為空白")
+ 
+ 
+ class ExpenseResponse(BaseModel):
+     id: int
+     description: str
+-    total_amount: float
++    total_cents: int
+     payer_id: int
+     splits: List[SplitResponse]
+     model_config = ConfigDict(from_attributes=True)
+@@ -55,16 +77,17 @@ class SettlementResponse(BaseModel):
+     to_person: str
+     from_id: int
+     to_id: int
+-    amount: float
++    amount_cents: int
+ 
+ 
+ class BalanceResponse(BaseModel):
+     person_id: int
+     name: str
+-    amount: float
++    amount_cents: int
+ 
+ 
+ class OverviewResponse(BaseModel):
++    trip: TripResponse
+     persons: List[PersonResponse]
+     expenses: List[ExpenseResponse]
+     balances: List[BalanceResponse]
+diff --git a/backend/routers/dept_simplification/settlement.py b/backend/routers/dept_simplification/settlement.py
+index e1868f6..c989164 100644
+--- a/backend/routers/dept_simplification/settlement.py
++++ b/backend/routers/dept_simplification/settlement.py
+@@ -1,38 +1,20 @@
+ """以分為單位計算淨額，並盡量減少轉帳次數。"""
+ 
+ from collections import defaultdict
+-from decimal import Decimal, ROUND_HALF_UP
+ import heapq
+ 
+-CENT = Decimal("0.01")
+-
+-
+-def to_cents(value) -> int:
+-    quantized = Decimal(str(value)).quantize(CENT, rounding=ROUND_HALF_UP)
+-    return int(quantized * 100)
+-
+-
+-def from_cents(cents: int) -> float:
+-    return float(Decimal(cents) / Decimal(100))
+-
+-
+-def even_split_cents(total_cents: int, n: int) -> list[int]:
+-    """把總額平分，餘數分給前面幾人，確保加總精確。"""
+-    if n <= 0:
+-        return []
+-    base, remainder = divmod(total_cents, n)
+-    return [base + (1 if i < remainder else 0) for i in range(n)]
+-
+ 
+ def net_balances_cents(persons, expenses) -> dict[int, int]:
++    """每個人的淨額（分）：正數 = 應收，負數 = 應付。"""
+     balances = {person.id: 0 for person in persons}
+     for expense in expenses:
+-        payer_id = expense.payer_id
+-        balances[payer_id] = balances.get(
+-            payer_id, 0) + to_cents(expense.total_amount)
++        balances[expense.payer_id] = (
++            balances.get(expense.payer_id, 0) + expense.total_cents
++        )
+         for split in expense.splits:
+-            pid = split.person_id
+-            balances[pid] = balances.get(pid, 0) - to_cents(split.amount)
++            balances[split.person_id] = (
++                balances.get(split.person_id, 0) - split.amount_cents
++            )
+     return balances
+ 
+ 
+diff --git a/backend/tests/conftest.py b/backend/tests/conftest.py
+new file mode 100644
+index 0000000..e264ef4
+--- /dev/null
++++ b/backend/tests/conftest.py
+@@ -0,0 +1,28 @@
++import os
++
++# 必須在 import 任何 routers.* 之前設定：測試一律使用記憶體資料庫
++os.environ["DEPT_DATABASE_URL"] = "sqlite://"
++
++import pytest  # noqa: E402
++from fastapi import FastAPI  # noqa: E402
++from fastapi.testclient import TestClient  # noqa: E402
++
++from routers.dept_simplification import models  # noqa: E402
++from routers.dept_simplification.database import engine  # noqa: E402
++from routers.dept_simplification.migrations import init_db  # noqa: E402
++from routers.dept_simplification.router import router as dept_router  # noqa: E402
++
++
++@pytest.fixture()
++def client():
++    models.Base.metadata.drop_all(bind=engine)
++    init_db()
++    app = FastAPI()
++    app.include_router(dept_router, prefix="/api/dept")
++    with TestClient(app) as test_client:
++        yield test_client
++
++
++@pytest.fixture()
++def trip_id(client):
++    return client.get("/api/dept/trips/").json()[0]["id"]
+diff --git a/backend/tests/test_blast_api.py b/backend/tests/test_blast_api.py
+new file mode 100644
+index 0000000..9cc92df
+--- /dev/null
++++ b/backend/tests/test_blast_api.py
+@@ -0,0 +1,46 @@
++import cv2
++import numpy as np
++from fastapi import FastAPI
++from fastapi.testclient import TestClient
++
++from routers.block_blast_solver.router import router
++
++app = FastAPI()
++app.include_router(router, prefix="/api/blast")
++client = TestClient(app)
++
++
++def empty_board():
++    return [[0] * 8 for _ in range(8)]
++
++
++def test_blocks_lists_all_shapes():
++    blocks = client.get("/api/blast/blocks").json()
++    assert len(blocks) == 29
++    assert blocks[0] == {"id": 1, "name": "單格", "matrix": [[1]]}
++
++
++def test_solve_clears_a_line():
++    board = empty_board()
++    board[0] = [1, 1, 1, 1, 1, 1, 1, 0]  # 差最後一格就能消一列
++    res = client.post("/api/blast/solve", json={"board": board, "block_ids": [1]}).json()
++    assert res["status"] == "success"
++    assert res["steps"] == [{"block_id": 1, "position": {"row": 0, "col": 7}}]
++
++
++def test_solve_validates_input():
++    assert client.post("/api/blast/solve", json={"board": [[0]], "block_ids": [1]}).status_code == 400
++    assert client.post("/api/blast/solve", json={"board": empty_board(), "block_ids": []}).status_code == 400
++    assert client.post("/api/blast/solve", json={"board": empty_board(), "block_ids": [999]}).status_code == 404
++
++
++def test_recognize_returns_400_not_500_when_board_not_found():
++    blank = np.zeros((300, 300, 3), dtype=np.uint8)
++    ok, png = cv2.imencode(".png", blank)
++    res = client.post("/api/blast/recognize", files={"file": ("x.png", png.tobytes(), "image/png")})
++    assert res.status_code == 400
++
++
++def test_recognize_rejects_non_image():
++    res = client.post("/api/blast/recognize", files={"file": ("x.txt", b"hello", "text/plain")})
++    assert res.status_code == 400
+diff --git a/backend/tests/test_dept_api.py b/backend/tests/test_dept_api.py
+new file mode 100644
+index 0000000..e9bd55c
+--- /dev/null
++++ b/backend/tests/test_dept_api.py
+@@ -0,0 +1,141 @@
++BASE = "/api/dept"
++
++
++def add_person(client, trip_id, name):
++    res = client.post(f"{BASE}/trips/{trip_id}/persons/", json={"name": name})
++    assert res.status_code == 200, res.text
++    return res.json()
++
++
++def ids_by_name(overview):
++    return {p["name"]: p["id"] for p in overview["persons"]}
++
++
++def expense(payer, splits, total=None, description="晚餐"):
++    return {
++        "description": description,
++        "total_cents": total if total is not None else sum(splits.values()),
++        "payer_id": payer,
++        "splits": [{"person_id": pid, "amount_cents": c} for pid, c in splits.items()],
++    }
++
++
++def test_startup_creates_default_trip(client):
++    trips = client.get(f"{BASE}/trips/").json()
++    assert [t["name"] for t in trips] == ["預設旅程"]
++
++
++def test_full_flow_returns_overview_after_each_change(client, trip_id):
++    add_person(client, trip_id, "小明")
++    ov = add_person(client, trip_id, "小華")
++    ids = ids_by_name(ov)
++
++    res = client.post(
++        f"{BASE}/trips/{trip_id}/expenses/",
++        json=expense(ids["小明"], {ids["小明"]: 50_000, ids["小華"]: 50_000}),
++    )
++    assert res.status_code == 200
++    ov = res.json()
++
++    assert ov["settlements"] == [
++        {
++            "from_id": ids["小華"],
++            "to_id": ids["小明"],
++            "from_person": "小華",
++            "to_person": "小明",
++            "amount_cents": 50_000,
++        }
++    ]
++    assert {b["name"]: b["amount_cents"] for b in ov["balances"]} == {
++        "小明": 50_000,
++        "小華": -50_000,
++    }
++    assert (ov["original_edges"], ov["simplified_count"]) == (1, 1)
++
++    ov = client.delete(f"{BASE}/trips/{trip_id}/expenses/{ov['expenses'][0]['id']}").json()
++    assert ov["expenses"] == [] and ov["settlements"] == []
++
++
++def test_splits_must_add_up_exactly(client, trip_id):
++    ov = add_person(client, trip_id, "小明")
++    ov = add_person(client, trip_id, "小華")
++    ids = ids_by_name(ov)
++
++    res = client.post(
++        f"{BASE}/trips/{trip_id}/expenses/",
++        json=expense(ids["小明"], {ids["小明"]: 500, ids["小華"]: 499}, total=1000),
++    )
++    assert res.status_code == 400
++    assert "加總" in res.json()["detail"]
++
++
++def test_rejects_float_money_and_bad_values(client, trip_id):
++    ov = add_person(client, trip_id, "小明")
++    pid = ids_by_name(ov)["小明"]
++    base = expense(pid, {pid: 100})
++
++    for bad in ({"total_cents": 10.5}, {"total_cents": 0}, {"total_cents": -5}):
++        res = client.post(f"{BASE}/trips/{trip_id}/expenses/", json={**base, **bad})
++        assert res.status_code == 422
++
++
++def test_duplicate_name_only_conflicts_inside_the_same_trip(client, trip_id):
++    add_person(client, trip_id, "小明")
++    dup = client.post(f"{BASE}/trips/{trip_id}/persons/", json={"name": " 小明 "})
++    assert dup.status_code == 409
++
++    other = client.post(f"{BASE}/trips/", json={"name": "日本"}).json()["id"]
++    assert client.post(f"{BASE}/trips/{other}/persons/", json={"name": "小明"}).status_code == 200
++
++
++def test_trips_are_isolated_from_each_other(client, trip_id):
++    other = client.post(f"{BASE}/trips/", json={"name": "日本"}).json()["id"]
++    add_person(client, trip_id, "小明")
++
++    assert client.get(f"{BASE}/trips/{other}/overview/").json()["persons"] == []
++
++
++def test_cannot_touch_another_trips_person_or_expense(client, trip_id):
++    other = client.post(f"{BASE}/trips/", json={"name": "日本"}).json()["id"]
++    ov = add_person(client, trip_id, "小明")
++    pid = ids_by_name(ov)["小明"]
++
++    assert client.delete(f"{BASE}/trips/{other}/persons/{pid}").status_code == 404
++
++    # 用別的旅程的成員來記帳，要被擋下
++    res = client.post(f"{BASE}/trips/{other}/expenses/", json=expense(pid, {pid: 100}))
++    assert res.status_code == 400
++
++
++def test_person_with_expenses_cannot_be_deleted(client, trip_id):
++    ov = add_person(client, trip_id, "小明")
++    pid = ids_by_name(ov)["小明"]
++    client.post(f"{BASE}/trips/{trip_id}/expenses/", json=expense(pid, {pid: 100}))
++
++    res = client.delete(f"{BASE}/trips/{trip_id}/persons/{pid}")
++    assert res.status_code == 400
++
++
++def test_reset_clears_trip_but_keeps_it(client, trip_id):
++    ov = add_person(client, trip_id, "小明")
++    pid = ids_by_name(ov)["小明"]
++    client.post(f"{BASE}/trips/{trip_id}/expenses/", json=expense(pid, {pid: 100}))
++
++    ov = client.delete(f"{BASE}/trips/{trip_id}/data/").json()
++    assert ov["persons"] == [] and ov["expenses"] == []
++    assert ov["trip"]["id"] == trip_id
++
++
++def test_delete_trip_removes_everything_in_it(client, trip_id):
++    other = client.post(f"{BASE}/trips/", json={"name": "日本"}).json()["id"]
++    ov = add_person(client, other, "小明")
++    pid = ids_by_name(ov)["小明"]
++    client.post(f"{BASE}/trips/{other}/expenses/", json=expense(pid, {pid: 100}))
++
++    assert client.delete(f"{BASE}/trips/{other}").status_code == 200
++    assert client.get(f"{BASE}/trips/{other}/overview/").status_code == 404
++    assert [t["id"] for t in client.get(f"{BASE}/trips/").json()] == [trip_id]
++
++
++def test_unknown_trip_is_404(client):
++    assert client.get(f"{BASE}/trips/9999/overview/").status_code == 404
+diff --git a/backend/tests/test_migration.py b/backend/tests/test_migration.py
+new file mode 100644
+index 0000000..2d2af43
+--- /dev/null
++++ b/backend/tests/test_migration.py
+@@ -0,0 +1,72 @@
++"""舊版資料庫（Float 金額、沒有旅程）要能無損升級。"""
++
++import sqlite3
++
++import pytest
++
++from routers.dept_simplification import database, migrations, models
++
++
++@pytest.fixture()
++def legacy_db(tmp_path, monkeypatch):
++    path = tmp_path / "legacy.db"
++    conn = sqlite3.connect(path)
++    conn.executescript(
++        """
++        CREATE TABLE persons (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL);
++        CREATE UNIQUE INDEX ix_persons_name ON persons (name);
++        CREATE INDEX ix_persons_id ON persons (id);
++        CREATE TABLE expenses (id INTEGER PRIMARY KEY, description VARCHAR NOT NULL,
++            total_amount FLOAT NOT NULL, payer_id INTEGER NOT NULL REFERENCES persons(id));
++        CREATE TABLE expense_splits (id INTEGER PRIMARY KEY, expense_id INTEGER NOT NULL REFERENCES expenses(id),
++            person_id INTEGER NOT NULL REFERENCES persons(id), amount FLOAT NOT NULL);
++        INSERT INTO persons VALUES (1,'小明'),(2,'小華');
++        INSERT INTO expenses VALUES (1,'拉麵',640.2,1);
++        INSERT INTO expense_splits VALUES (1,1,1,320.1),(2,1,2,320.1);
++        INSERT INTO expenses VALUES (2,'浮點陷阱',12.35,2);
++        INSERT INTO expense_splits VALUES (3,2,1,12.35);
++        """
++    )
++    conn.commit()
++    conn.close()
++
++    from sqlalchemy import create_engine
++
++    engine = create_engine(f"sqlite:///{path}", connect_args={"check_same_thread": False})
++    monkeypatch.setattr(migrations, "engine", engine)
++    monkeypatch.setattr(migrations, "DATABASE_URL", f"sqlite:///{path}")
++    monkeypatch.setattr(database, "engine", engine)
++    from sqlalchemy.orm import sessionmaker
++
++    monkeypatch.setattr(migrations, "SessionLocal", sessionmaker(bind=engine))
++    return path, engine
++
++
++def test_legacy_data_is_moved_into_default_trip_with_exact_cents(legacy_db):
++    path, engine = legacy_db
++    migrations.init_db()
++
++    from sqlalchemy.orm import Session
++
++    with Session(engine) as db:
++        trips = db.query(models.Trip).all()
++        assert [t.name for t in trips] == ["預設旅程"]
++        assert {p.name for p in db.query(models.Person)} == {"小明", "小華"}
++        assert all(p.trip_id == trips[0].id for p in db.query(models.Person))
++        cents = {e.description: e.total_cents for e in db.query(models.Expense)}
++        assert cents == {"拉麵": 64020, "浮點陷阱": 1235}
++        assert sorted(s.amount_cents for s in db.query(models.ExpenseSplit)) == [1235, 32010, 32010]
++
++    # 升級前有備份
++    assert list(path.parent.glob("legacy.db.bak-*"))
++
++
++def test_migration_is_idempotent(legacy_db):
++    migrations.init_db()
++    migrations.init_db()
++
++    from sqlalchemy.orm import Session
++
++    with Session(legacy_db[1]) as db:
++        assert db.query(models.Trip).count() == 1
++        assert db.query(models.Expense).count() == 2
+diff --git a/backend/tests/test_settlement.py b/backend/tests/test_settlement.py
+new file mode 100644
+index 0000000..c55dc2b
+--- /dev/null
++++ b/backend/tests/test_settlement.py
+@@ -0,0 +1,49 @@
++import random
++
++from routers.dept_simplification.settlement import simplify_transfers
++
++
++def apply_transfers(balances, transfers):
++    """把轉帳套用回淨額，結清後每個人都應該是 0。"""
++    result = dict(balances)
++    for from_id, to_id, cents in transfers:
++        result[from_id] += cents
++        result[to_id] -= cents
++    return result
++
++
++def test_empty_and_zero_balances_need_no_transfer():
++    assert simplify_transfers({}) == []
++    assert simplify_transfers({1: 0, 2: 0}) == []
++
++
++def test_single_debt():
++    assert simplify_transfers({1: -500, 2: 500}) == [(1, 2, 500)]
++
++
++def test_chain_collapses_to_one_transfer():
++    # A 欠 B 100、B 欠 C 100  ->  淨額 A=-100, B=0, C=+100
++    assert simplify_transfers({1: -100, 2: 0, 3: 100}) == [(1, 3, 100)]
++
++
++def test_one_person_clears_several_creditors_exactly():
++    transfers = simplify_transfers({1: -300, 2: 100, 3: 200})
++    assert sorted(transfers) == [(1, 2, 100), (1, 3, 200)]
++
++
++def test_random_balances_always_settle_to_zero():
++    rng = random.Random(20261023)
++    for _ in range(300):
++        n = rng.randint(2, 10)
++        amounts = [rng.randint(-50_000, 50_000) for _ in range(n - 1)]
++        amounts.append(-sum(amounts))  # 總和必須為 0
++        balances = {i + 1: a for i, a in enumerate(amounts)}
++
++        transfers = simplify_transfers(balances)
++
++        assert all(cents > 0 for _, _, cents in transfers)
++        assert all(a != b for a, b, _ in transfers)
++        assert set(apply_transfers(balances, transfers).values()) <= {0}
++        # 淨額非零的人數是上限：最多 (非零人數 - 1) 筆就能結清
++        nonzero = sum(1 for a in balances.values() if a != 0)
++        assert len(transfers) <= max(nonzero - 1, 0)
+diff --git a/frontend/.gitignore b/frontend/.gitignore
+index e55105b..a547bf3 100644
+--- a/frontend/.gitignore
++++ b/frontend/.gitignore
+@@ -22,6 +22,3 @@ dist-ssr
+ *.njsproj
+ *.sln
+ *.sw?
+-
+-# env
+-.env.local
+diff --git a/frontend/.prettierignore b/frontend/.prettierignore
+new file mode 100644
+index 0000000..91a3983
+--- /dev/null
++++ b/frontend/.prettierignore
+@@ -0,0 +1,3 @@
++dist
++node_modules
++package-lock.json
+diff --git a/frontend/.prettierrc.json b/frontend/.prettierrc.json
+new file mode 100644
+index 0000000..bb5a93c
+--- /dev/null
++++ b/frontend/.prettierrc.json
+@@ -0,0 +1,6 @@
++{
++	"useTabs": true,
++	"printWidth": 100,
++	"singleQuote": false,
++	"trailingComma": "all"
++}
+diff --git a/frontend/package-lock.json b/frontend/package-lock.json
+new file mode 100644
+index 0000000..f72f239
+--- /dev/null
++++ b/frontend/package-lock.json
+@@ -0,0 +1,2445 @@
++{
++	"name": "frontend",
++	"version": "0.0.0",
++	"lockfileVersion": 3,
++	"requires": true,
++	"packages": {
++		"": {
++			"name": "frontend",
++			"version": "0.0.0",
++			"dependencies": {
++				"@capacitor/core": "^8.5.2",
++				"@capacitor/filesystem": "^8.1.5",
++				"@capacitor/haptics": "^8.0.2",
++				"@capacitor/share": "^8.0.3",
++				"axios": "^1.20.0",
++				"html2canvas": "^1.4.1",
++				"lucide-react": "^1.46.0",
++				"prop-types": "^15.8.1",
++				"react": "^19.2.8",
++				"react-dom": "^19.2.8",
++				"react-router-dom": "^7.18.4",
++				"react-swipeable-list": "^1.10.0"
++			},
++			"devDependencies": {
++				"@eslint/js": "^10.0.1",
++				"@types/react": "^19.2.18",
++				"@types/react-dom": "^19.2.7",
++				"@vitejs/plugin-react": "^6.1.1",
++				"eslint": "^10.10.0",
++				"eslint-plugin-react-hooks": "^7.1.1",
++				"eslint-plugin-react-refresh": "^0.5.6",
++				"globals": "^17.12.0",
++				"prettier": "^3.9.10",
++				"vite": "^8.3.0",
++				"vitest": "^5.0.5"
++			}
++		},
++		"node_modules/@babel/code-frame": {
++			"version": "7.29.7",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@babel/helper-validator-identifier": "^7.29.7",
++				"js-tokens": "^4.0.0",
++				"picocolors": "^1.1.1"
++			},
++			"engines": {
++				"node": ">=6.9.0"
++			}
++		},
++		"node_modules/@babel/compat-data": {
++			"version": "7.29.7",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=6.9.0"
++			}
++		},
++		"node_modules/@babel/core": {
++			"version": "7.29.7",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@babel/code-frame": "^7.29.7",
++				"@babel/generator": "^7.29.7",
++				"@babel/helper-compilation-targets": "^7.29.7",
++				"@babel/helper-module-transforms": "^7.29.7",
++				"@babel/helpers": "^7.29.7",
++				"@babel/parser": "^7.29.7",
++				"@babel/template": "^7.29.7",
++				"@babel/traverse": "^7.29.7",
++				"@babel/types": "^7.29.7",
++				"@jridgewell/remapping": "^2.3.5",
++				"convert-source-map": "^2.0.0",
++				"debug": "^4.1.0",
++				"gensync": "^1.0.0-beta.2",
++				"json5": "^2.2.3",
++				"semver": "^6.3.1"
++			},
++			"engines": {
++				"node": ">=6.9.0"
++			},
++			"funding": {
++				"type": "opencollective",
++				"url": "https://opencollective.com/babel"
++			}
++		},
++		"node_modules/@babel/generator": {
++			"version": "7.29.8",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@babel/parser": "^7.29.8",
++				"@babel/types": "^7.29.8",
++				"@jridgewell/gen-mapping": "^0.3.12",
++				"@jridgewell/trace-mapping": "^0.3.28",
++				"jsesc": "^3.0.2"
++			},
++			"engines": {
++				"node": ">=6.9.0"
++			}
++		},
++		"node_modules/@babel/helper-compilation-targets": {
++			"version": "7.29.7",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@babel/compat-data": "^7.29.7",
++				"@babel/helper-validator-option": "^7.29.7",
++				"browserslist": "^4.24.0",
++				"lru-cache": "^5.1.1",
++				"semver": "^6.3.1"
++			},
++			"engines": {
++				"node": ">=6.9.0"
++			}
++		},
++		"node_modules/@babel/helper-globals": {
++			"version": "7.29.7",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=6.9.0"
++			}
++		},
++		"node_modules/@babel/helper-module-imports": {
++			"version": "7.29.7",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@babel/traverse": "^7.29.7",
++				"@babel/types": "^7.29.7"
++			},
++			"engines": {
++				"node": ">=6.9.0"
++			}
++		},
++		"node_modules/@babel/helper-module-transforms": {
++			"version": "7.29.7",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@babel/helper-module-imports": "^7.29.7",
++				"@babel/helper-validator-identifier": "^7.29.7",
++				"@babel/traverse": "^7.29.7"
++			},
++			"engines": {
++				"node": ">=6.9.0"
++			},
++			"peerDependencies": {
++				"@babel/core": "^7.0.0"
++			}
++		},
++		"node_modules/@babel/helper-string-parser": {
++			"version": "7.29.7",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=6.9.0"
++			}
++		},
++		"node_modules/@babel/helper-validator-identifier": {
++			"version": "7.29.7",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=6.9.0"
++			}
++		},
++		"node_modules/@babel/helper-validator-option": {
++			"version": "7.29.7",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=6.9.0"
++			}
++		},
++		"node_modules/@babel/helpers": {
++			"version": "7.29.10",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@babel/template": "^7.29.7",
++				"@babel/types": "^7.29.8"
++			},
++			"engines": {
++				"node": ">=6.9.0"
++			}
++		},
++		"node_modules/@babel/parser": {
++			"version": "7.29.9",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@babel/types": "^7.29.8"
++			},
++			"bin": {
++				"parser": "bin/babel-parser.js"
++			},
++			"engines": {
++				"node": ">=6.0.0"
++			}
++		},
++		"node_modules/@babel/template": {
++			"version": "7.29.7",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@babel/code-frame": "^7.29.7",
++				"@babel/parser": "^7.29.7",
++				"@babel/types": "^7.29.7"
++			},
++			"engines": {
++				"node": ">=6.9.0"
++			}
++		},
++		"node_modules/@babel/traverse": {
++			"version": "7.29.10",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@babel/code-frame": "^7.29.7",
++				"@babel/generator": "^7.29.8",
++				"@babel/helper-globals": "^7.29.7",
++				"@babel/parser": "^7.29.9",
++				"@babel/template": "^7.29.7",
++				"@babel/types": "^7.29.8",
++				"debug": "^4.3.1"
++			},
++			"engines": {
++				"node": ">=6.9.0"
++			}
++		},
++		"node_modules/@babel/types": {
++			"version": "7.29.8",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@babel/helper-string-parser": "^7.29.7",
++				"@babel/helper-validator-identifier": "^7.29.7"
++			},
++			"engines": {
++				"node": ">=6.9.0"
++			}
++		},
++		"node_modules/@cacheable/memory": {
++			"version": "2.2.0",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@cacheable/utils": "^2.5.0",
++				"@keyv/bigmap": "^1.3.1",
++				"hookified": "^1.15.1",
++				"keyv": "^5.6.0"
++			}
++		},
++		"node_modules/@cacheable/utils": {
++			"version": "2.5.0",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"hashery": "^1.5.1",
++				"keyv": "^5.6.0"
++			}
++		},
++		"node_modules/@capacitor/core": {
++			"version": "8.5.3",
++			"license": "MIT",
++			"dependencies": {
++				"tslib": "^2.1.0"
++			}
++		},
++		"node_modules/@capacitor/filesystem": {
++			"version": "8.1.5",
++			"resolved": "https://registry.npmjs.org/@capacitor/filesystem/-/filesystem-8.1.5.tgz",
++			"integrity": "sha512-m1RkI8L83NJeppEKyRWioK3MDp2vjlA+QfUQcF8/xRlcXNC2HYxqoyYJ+K4M0EcVovy+g+4F24S05+bhK4Vgdg==",
++			"license": "MIT",
++			"dependencies": {
++				"@capacitor/synapse": "^1.0.4"
++			},
++			"peerDependencies": {
++				"@capacitor/core": ">=8.0.0"
++			}
++		},
++		"node_modules/@capacitor/haptics": {
++			"version": "8.0.2",
++			"license": "MIT",
++			"peerDependencies": {
++				"@capacitor/core": ">=8.0.0"
++			}
++		},
++		"node_modules/@capacitor/share": {
++			"version": "8.0.3",
++			"resolved": "https://registry.npmjs.org/@capacitor/share/-/share-8.0.3.tgz",
++			"integrity": "sha512-gnvZBV1NPu2B8vd1UKncR56G15ueHd0aZLqgDov++t3SmTBG9Q0VrAZ1VnHn5stxlmglVaTb4RwopMgbpLzroA==",
++			"license": "MIT",
++			"peerDependencies": {
++				"@capacitor/core": ">=8.0.0"
++			}
++		},
++		"node_modules/@capacitor/synapse": {
++			"version": "1.0.4",
++			"resolved": "https://registry.npmjs.org/@capacitor/synapse/-/synapse-1.0.4.tgz",
++			"integrity": "sha512-/C1FUo8/OkKuAT4nCIu/34ny9siNHr9qtFezu4kxm6GY1wNFxrCFWjfYx5C1tUhVGz3fxBABegupkpjXvjCHrw==",
++			"license": "ISC"
++		},
++		"node_modules/@eslint-community/eslint-utils": {
++			"version": "4.10.1",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"eslint-visitor-keys": "^3.4.3"
++			},
++			"engines": {
++				"node": "^12.22.0 || ^14.17.0 || >=16.0.0"
++			},
++			"funding": {
++				"url": "https://opencollective.com/eslint"
++			},
++			"peerDependencies": {
++				"eslint": "^6.0.0 || ^7.0.0 || >=8.0.0"
++			}
++		},
++		"node_modules/@eslint-community/eslint-utils/node_modules/eslint-visitor-keys": {
++			"version": "3.4.3",
++			"dev": true,
++			"license": "Apache-2.0",
++			"engines": {
++				"node": "^12.22.0 || ^14.17.0 || >=16.0.0"
++			},
++			"funding": {
++				"url": "https://opencollective.com/eslint"
++			}
++		},
++		"node_modules/@eslint-community/regexpp": {
++			"version": "4.12.2",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": "^12.0.0 || ^14.0.0 || >=16.0.0"
++			}
++		},
++		"node_modules/@eslint/config-array": {
++			"version": "0.23.5",
++			"dev": true,
++			"license": "Apache-2.0",
++			"dependencies": {
++				"@eslint/object-schema": "^3.0.5",
++				"debug": "^4.3.1",
++				"minimatch": "^10.2.4"
++			},
++			"engines": {
++				"node": "^20.19.0 || ^22.13.0 || >=24"
++			}
++		},
++		"node_modules/@eslint/config-helpers": {
++			"version": "0.7.0",
++			"dev": true,
++			"license": "Apache-2.0",
++			"dependencies": {
++				"@eslint/core": "^1.2.1"
++			},
++			"engines": {
++				"node": "^20.19.0 || ^22.13.0 || >=24"
++			}
++		},
++		"node_modules/@eslint/core": {
++			"version": "1.2.1",
++			"dev": true,
++			"license": "Apache-2.0",
++			"dependencies": {
++				"@types/json-schema": "^7.0.15"
++			},
++			"engines": {
++				"node": "^20.19.0 || ^22.13.0 || >=24"
++			}
++		},
++		"node_modules/@eslint/js": {
++			"version": "10.0.1",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": "^20.19.0 || ^22.13.0 || >=24"
++			},
++			"funding": {
++				"url": "https://eslint.org/donate"
++			},
++			"peerDependencies": {
++				"eslint": "^10.0.0"
++			},
++			"peerDependenciesMeta": {
++				"eslint": {
++					"optional": true
++				}
++			}
++		},
++		"node_modules/@eslint/object-schema": {
++			"version": "3.0.5",
++			"dev": true,
++			"license": "Apache-2.0",
++			"engines": {
++				"node": "^20.19.0 || ^22.13.0 || >=24"
++			}
++		},
++		"node_modules/@eslint/plugin-kit": {
++			"version": "0.7.3",
++			"dev": true,
++			"license": "Apache-2.0",
++			"dependencies": {
++				"@eslint/core": "^1.2.1",
++				"levn": "^0.4.1"
++			},
++			"engines": {
++				"node": "^20.19.0 || ^22.13.0 || >=24"
++			}
++		},
++		"node_modules/@humanfs/core": {
++			"version": "0.19.2",
++			"dev": true,
++			"license": "Apache-2.0",
++			"dependencies": {
++				"@humanfs/types": "^0.15.0"
++			},
++			"engines": {
++				"node": ">=18.18.0"
++			}
++		},
++		"node_modules/@humanfs/node": {
++			"version": "0.16.8",
++			"dev": true,
++			"license": "Apache-2.0",
++			"dependencies": {
++				"@humanfs/core": "^0.19.2",
++				"@humanfs/types": "^0.15.0",
++				"@humanwhocodes/retry": "^0.4.0"
++			},
++			"engines": {
++				"node": ">=18.18.0"
++			}
++		},
++		"node_modules/@humanfs/types": {
++			"version": "0.15.0",
++			"dev": true,
++			"license": "Apache-2.0",
++			"engines": {
++				"node": ">=18.18.0"
++			}
++		},
++		"node_modules/@humanwhocodes/module-importer": {
++			"version": "1.0.1",
++			"dev": true,
++			"license": "Apache-2.0",
++			"engines": {
++				"node": ">=12.22"
++			},
++			"funding": {
++				"type": "github",
++				"url": "https://github.com/sponsors/nzakas"
++			}
++		},
++		"node_modules/@humanwhocodes/retry": {
++			"version": "0.4.3",
++			"dev": true,
++			"license": "Apache-2.0",
++			"engines": {
++				"node": ">=18.18"
++			},
++			"funding": {
++				"type": "github",
++				"url": "https://github.com/sponsors/nzakas"
++			}
++		},
++		"node_modules/@jridgewell/gen-mapping": {
++			"version": "0.3.13",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@jridgewell/sourcemap-codec": "^1.5.0",
++				"@jridgewell/trace-mapping": "^0.3.24"
++			}
++		},
++		"node_modules/@jridgewell/remapping": {
++			"version": "2.3.5",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@jridgewell/gen-mapping": "^0.3.5",
++				"@jridgewell/trace-mapping": "^0.3.24"
++			}
++		},
++		"node_modules/@jridgewell/resolve-uri": {
++			"version": "3.1.2",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=6.0.0"
++			}
++		},
++		"node_modules/@jridgewell/sourcemap-codec": {
++			"version": "1.6.0",
++			"dev": true,
++			"license": "MIT"
++		},
++		"node_modules/@jridgewell/trace-mapping": {
++			"version": "0.3.31",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@jridgewell/resolve-uri": "^3.1.0",
++				"@jridgewell/sourcemap-codec": "^1.4.14"
++			}
++		},
++		"node_modules/@keyv/bigmap": {
++			"version": "1.3.1",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"hashery": "^1.4.0",
++				"hookified": "^1.15.0"
++			},
++			"engines": {
++				"node": ">= 18"
++			},
++			"peerDependencies": {
++				"keyv": "^5.6.0"
++			}
++		},
++		"node_modules/@keyv/serialize": {
++			"version": "1.1.1",
++			"dev": true,
++			"license": "MIT"
++		},
++		"node_modules/@oxc-project/types": {
++			"version": "0.155.0",
++			"dev": true,
++			"license": "MIT",
++			"funding": {
++				"url": "https://github.com/sponsors/oxc-project"
++			}
++		},
++		"node_modules/@rolldown/binding-linux-x64-gnu": {
++			"version": "1.2.15",
++			"cpu": [
++				"x64"
++			],
++			"dev": true,
++			"license": "MIT",
++			"optional": true,
++			"os": [
++				"linux"
++			],
++			"engines": {
++				"node": "^20.19.0 || >=22.12.0"
++			}
++		},
++		"node_modules/@rolldown/binding-linux-x64-musl": {
++			"version": "1.2.15",
++			"cpu": [
++				"x64"
++			],
++			"dev": true,
++			"license": "MIT",
++			"optional": true,
++			"os": [
++				"linux"
++			],
++			"engines": {
++				"node": "^20.19.0 || >=22.12.0"
++			}
++		},
++		"node_modules/@rolldown/pluginutils": {
++			"version": "1.0.1",
++			"dev": true,
++			"license": "MIT"
++		},
++		"node_modules/@types/chai": {
++			"version": "5.2.3",
++			"resolved": "https://registry.npmjs.org/@types/chai/-/chai-5.2.3.tgz",
++			"integrity": "sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@types/deep-eql": "*",
++				"assertion-error": "^2.0.1"
++			}
++		},
++		"node_modules/@types/deep-eql": {
++			"version": "4.0.2",
++			"resolved": "https://registry.npmjs.org/@types/deep-eql/-/deep-eql-4.0.2.tgz",
++			"integrity": "sha512-c9h9dVVMigMPc4bwTvC5dxqtqJZwQPePsWjPlpSOnojbor6pGqdk541lfA7AqFQr5pB1BRdq0juY9db81BwyFw==",
++			"dev": true,
++			"license": "MIT"
++		},
++		"node_modules/@types/esrecurse": {
++			"version": "4.3.1",
++			"dev": true,
++			"license": "MIT"
++		},
++		"node_modules/@types/estree": {
++			"version": "1.0.9",
++			"dev": true,
++			"license": "MIT"
++		},
++		"node_modules/@types/json-schema": {
++			"version": "7.0.15",
++			"dev": true,
++			"license": "MIT"
++		},
++		"node_modules/@types/react": {
++			"version": "19.3.0",
++			"devOptional": true,
++			"license": "MIT",
++			"dependencies": {
++				"csstype": "^3.2.2"
++			}
++		},
++		"node_modules/@types/react-dom": {
++			"version": "19.3.0",
++			"dev": true,
++			"license": "MIT",
++			"peerDependencies": {
++				"@types/react": "^19.3.0"
++			}
++		},
++		"node_modules/@vitejs/plugin-react": {
++			"version": "6.1.2",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@rolldown/pluginutils": "^1.0.1"
++			},
++			"engines": {
++				"node": "^20.19.0 || >=22.12.0"
++			},
++			"peerDependencies": {
++				"@rolldown/plugin-babel": "^0.1.7 || ^0.2.0",
++				"babel-plugin-react-compiler": "^1.0.0",
++				"oxc-transform-react": "^0.152.0",
++				"vite": "^8.0.0"
++			},
++			"peerDependenciesMeta": {
++				"@rolldown/plugin-babel": {
++					"optional": true
++				},
++				"babel-plugin-react-compiler": {
++					"optional": true
++				},
++				"oxc-transform-react": {
++					"optional": true
++				}
++			}
++		},
++		"node_modules/@vitest/mocker": {
++			"version": "5.0.5",
++			"resolved": "https://registry.npmjs.org/@vitest/mocker/-/mocker-5.0.5.tgz",
++			"integrity": "sha512-xLL3lkDegJZw+MGoGaCCsFayDZthGgpAtr3Vziyfc4p7xH89K7KRPcRBBh/kEYm0Aqkt5DtTmkYpBtRV/FrHZg==",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@jridgewell/trace-mapping": "0.3.31",
++				"@vitest/spy": "5.0.5",
++				"estree-walker": "^3.0.3",
++				"magic-string": "^1.4.3"
++			},
++			"funding": {
++				"url": "https://opencollective.com/vitest"
++			},
++			"peerDependencies": {
++				"msw": "^2.4.9 || ^3.0.0",
++				"vite": "^6.0.0 || ^7.0.0 || ^8.0.0"
++			},
++			"peerDependenciesMeta": {
++				"msw": {
++					"optional": true
++				},
++				"vite": {
++					"optional": true
++				}
++			}
++		},
++		"node_modules/@vitest/spy": {
++			"version": "5.0.5",
++			"resolved": "https://registry.npmjs.org/@vitest/spy/-/spy-5.0.5.tgz",
++			"integrity": "sha512-lwJRExuH417257Q5wv9QYugN9IMJkoxcrKrYxGPQkBzl7wlNpTUxD/5yNX4ESKVUIShKPgkGchYPFMWOOk0wzw==",
++			"dev": true,
++			"license": "MIT",
++			"funding": {
++				"url": "https://opencollective.com/vitest"
++			}
++		},
++		"node_modules/acorn": {
++			"version": "8.19.0",
++			"dev": true,
++			"license": "MIT",
++			"bin": {
++				"acorn": "bin/acorn"
++			},
++			"engines": {
++				"node": ">=0.4.0"
++			}
++		},
++		"node_modules/acorn-jsx": {
++			"version": "5.3.2",
++			"dev": true,
++			"license": "MIT",
++			"peerDependencies": {
++				"acorn": "^6.0.0 || ^7.0.0 || ^8.0.0"
++			}
++		},
++		"node_modules/agent-base": {
++			"version": "6.0.2",
++			"license": "MIT",
++			"dependencies": {
++				"debug": "4"
++			},
++			"engines": {
++				"node": ">= 6.0.0"
++			}
++		},
++		"node_modules/ajv": {
++			"version": "6.15.0",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"fast-deep-equal": "^3.1.1",
++				"fast-json-stable-stringify": "^2.0.0",
++				"json-schema-traverse": "^0.4.1",
++				"uri-js": "^4.2.2"
++			},
++			"funding": {
++				"type": "github",
++				"url": "https://github.com/sponsors/epoberezkin"
++			}
++		},
++		"node_modules/assertion-error": {
++			"version": "2.0.1",
++			"resolved": "https://registry.npmjs.org/assertion-error/-/assertion-error-2.0.1.tgz",
++			"integrity": "sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=12"
++			}
++		},
++		"node_modules/asynckit": {
++			"version": "0.4.0",
++			"license": "MIT"
++		},
++		"node_modules/axios": {
++			"version": "1.20.0",
++			"license": "MIT",
++			"dependencies": {
++				"follow-redirects": "^1.16.0",
++				"form-data": "^4.0.6",
++				"https-proxy-agent": "^5.0.1",
++				"proxy-from-env": "^2.1.0"
++			}
++		},
++		"node_modules/balanced-match": {
++			"version": "4.0.4",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": "18 || 20 || >=22"
++			}
++		},
++		"node_modules/base64-arraybuffer": {
++			"version": "1.0.2",
++			"license": "MIT",
++			"engines": {
++				"node": ">= 0.6.0"
++			}
++		},
++		"node_modules/baseline-browser-mapping": {
++			"version": "2.11.31",
++			"dev": true,
++			"license": "Apache-2.0",
++			"bin": {
++				"baseline-browser-mapping": "dist/cli.cjs"
++			},
++			"engines": {
++				"node": ">=6.0.0"
++			}
++		},
++		"node_modules/brace-expansion": {
++			"version": "5.0.12",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"balanced-match": "^4.0.2"
++			},
++			"engines": {
++				"node": "20 || >=22"
++			}
++		},
++		"node_modules/browserslist": {
++			"version": "4.29.4",
++			"dev": true,
++			"funding": [
++				{
++					"type": "opencollective",
++					"url": "https://opencollective.com/browserslist"
++				},
++				{
++					"type": "tidelift",
++					"url": "https://tidelift.com/funding/github/npm/browserslist"
++				},
++				{
++					"type": "github",
++					"url": "https://github.com/sponsors/ai"
++				}
++			],
++			"license": "MIT",
++			"dependencies": {
++				"baseline-browser-mapping": "^2.11.29",
++				"caniuse-lite": "^1.0.30001816",
++				"electron-to-chromium": "^1.5.459",
++				"node-releases": "^2.0.59",
++				"update-browserslist-db": "^1.3.4"
++			},
++			"bin": {
++				"browserslist": "cli.js"
++			},
++			"engines": {
++				"node": "^6 || ^7 || ^8 || ^9 || ^10 || ^11 || ^12 || >=13.7"
++			}
++		},
++		"node_modules/cacheable": {
++			"version": "2.5.0",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@cacheable/memory": "^2.2.0",
++				"@cacheable/utils": "^2.5.0",
++				"hookified": "^1.15.0",
++				"keyv": "^5.6.0",
++				"qified": "^0.10.1"
++			}
++		},
++		"node_modules/call-bind-apply-helpers": {
++			"version": "1.0.2",
++			"license": "MIT",
++			"dependencies": {
++				"es-errors": "^1.3.0",
++				"function-bind": "^1.1.2"
++			},
++			"engines": {
++				"node": ">= 0.4"
++			}
++		},
++		"node_modules/caniuse-lite": {
++			"version": "1.0.30001819",
++			"dev": true,
++			"funding": [
++				{
++					"type": "opencollective",
++					"url": "https://opencollective.com/browserslist"
++				},
++				{
++					"type": "tidelift",
++					"url": "https://tidelift.com/funding/github/npm/caniuse-lite"
++				},
++				{
++					"type": "github",
++					"url": "https://github.com/sponsors/ai"
++				}
++			],
++			"license": "CC-BY-4.0"
++		},
++		"node_modules/chai": {
++			"version": "6.3.0",
++			"resolved": "https://registry.npmjs.org/chai/-/chai-6.3.0.tgz",
++			"integrity": "sha512-XWAtwJ6OHO+tj0EKCs0Y2UamnyOxseZWltU4x2U2wh8g4AigdjwvtUjvLP2tqkA/avxHEtzxNaqGq/YGNwckKg==",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=18"
++			}
++		},
++		"node_modules/combined-stream": {
++			"version": "1.0.8",
++			"license": "MIT",
++			"dependencies": {
++				"delayed-stream": "~1.0.0"
++			},
++			"engines": {
++				"node": ">= 0.8"
++			}
++		},
++		"node_modules/convert-source-map": {
++			"version": "2.0.0",
++			"dev": true,
++			"license": "MIT"
++		},
++		"node_modules/cookie": {
++			"version": "1.1.1",
++			"license": "MIT",
++			"engines": {
++				"node": ">=18"
++			},
++			"funding": {
++				"type": "opencollective",
++				"url": "https://opencollective.com/express"
++			}
++		},
++		"node_modules/cross-spawn": {
++			"version": "7.0.6",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"path-key": "^3.1.0",
++				"shebang-command": "^2.0.0",
++				"which": "^2.0.1"
++			},
++			"engines": {
++				"node": ">= 8"
++			}
++		},
++		"node_modules/css-line-break": {
++			"version": "2.1.0",
++			"license": "MIT",
++			"dependencies": {
++				"utrie": "^1.0.2"
++			}
++		},
++		"node_modules/csstype": {
++			"version": "3.2.3",
++			"devOptional": true,
++			"license": "MIT"
++		},
++		"node_modules/debug": {
++			"version": "4.4.3",
++			"license": "MIT",
++			"dependencies": {
++				"ms": "^2.1.3"
++			},
++			"engines": {
++				"node": ">=6.0"
++			},
++			"peerDependenciesMeta": {
++				"supports-color": {
++					"optional": true
++				}
++			}
++		},
++		"node_modules/deep-is": {
++			"version": "0.1.4",
++			"dev": true,
++			"license": "MIT"
++		},
++		"node_modules/delayed-stream": {
++			"version": "1.0.0",
++			"license": "MIT",
++			"engines": {
++				"node": ">=0.4.0"
++			}
++		},
++		"node_modules/detect-libc": {
++			"version": "2.1.2",
++			"dev": true,
++			"license": "Apache-2.0",
++			"engines": {
++				"node": ">=8"
++			}
++		},
++		"node_modules/dunder-proto": {
++			"version": "1.0.1",
++			"license": "MIT",
++			"dependencies": {
++				"call-bind-apply-helpers": "^1.0.1",
++				"es-errors": "^1.3.0",
++				"gopd": "^1.2.0"
++			},
++			"engines": {
++				"node": ">= 0.4"
++			}
++		},
++		"node_modules/electron-to-chromium": {
++			"version": "1.5.463",
++			"dev": true,
++			"license": "ISC"
++		},
++		"node_modules/es-define-property": {
++			"version": "1.0.1",
++			"license": "MIT",
++			"engines": {
++				"node": ">= 0.4"
++			}
++		},
++		"node_modules/es-errors": {
++			"version": "1.3.0",
++			"license": "MIT",
++			"engines": {
++				"node": ">= 0.4"
++			}
++		},
++		"node_modules/es-module-lexer": {
++			"version": "2.3.2",
++			"resolved": "https://registry.npmjs.org/es-module-lexer/-/es-module-lexer-2.3.2.tgz",
++			"integrity": "sha512-poHGpORABojJJucnV9KbOavETW8lBVnphkW77ER5/BQ5Fz7oXSoCNek7IH3vR5nRjdsEz926ibFYX8KtLQmdyw==",
++			"dev": true,
++			"license": "MIT"
++		},
++		"node_modules/es-object-atoms": {
++			"version": "1.1.2",
++			"license": "MIT",
++			"dependencies": {
++				"es-errors": "^1.3.0"
++			},
++			"engines": {
++				"node": ">= 0.4"
++			}
++		},
++		"node_modules/es-set-tostringtag": {
++			"version": "2.1.0",
++			"license": "MIT",
++			"dependencies": {
++				"es-errors": "^1.3.0",
++				"get-intrinsic": "^1.2.6",
++				"has-tostringtag": "^1.0.2",
++				"hasown": "^2.0.2"
++			},
++			"engines": {
++				"node": ">= 0.4"
++			}
++		},
++		"node_modules/escalade": {
++			"version": "3.2.0",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=6"
++			}
++		},
++		"node_modules/escape-string-regexp": {
++			"version": "4.0.0",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=10"
++			},
++			"funding": {
++				"url": "https://github.com/sponsors/sindresorhus"
++			}
++		},
++		"node_modules/eslint": {
++			"version": "10.13.0",
++			"dev": true,
++			"license": "MIT",
++			"workspaces": [
++				"packages/*"
++			],
++			"dependencies": {
++				"@eslint-community/eslint-utils": "^4.8.0",
++				"@eslint-community/regexpp": "^4.12.2",
++				"@eslint/config-array": "^0.23.5",
++				"@eslint/config-helpers": "^0.7.0",
++				"@eslint/core": "^1.2.1",
++				"@eslint/plugin-kit": "^0.7.3",
++				"@humanfs/node": "^0.16.6",
++				"@humanwhocodes/module-importer": "^1.0.1",
++				"@humanwhocodes/retry": "^0.4.2",
++				"@types/estree": "^1.0.6",
++				"ajv": "^6.14.0",
++				"cross-spawn": "^7.0.6",
++				"debug": "^4.3.2",
++				"escape-string-regexp": "^4.0.0",
++				"eslint-scope": "^9.1.2",
++				"eslint-visitor-keys": "^5.0.1",
++				"espree": "^11.2.0",
++				"esquery": "^1.7.0",
++				"esutils": "^2.0.2",
++				"fast-deep-equal": "^3.1.3",
++				"file-entry-cache": "11.1.5 || >11.1.6 <12",
++				"find-up": "^5.0.0",
++				"glob-parent": "^6.0.2",
++				"ignore": "^5.2.0",
++				"imurmurhash": "^0.1.4",
++				"is-glob": "^4.0.0",
++				"json-stable-stringify-without-jsonify": "^1.0.1",
++				"minimatch": "^10.2.5",
++				"natural-compare": "^1.4.0",
++				"optionator": "^0.9.3"
++			},
++			"bin": {
++				"eslint": "bin/eslint.js"
++			},
++			"engines": {
++				"node": "^20.19.0 || ^22.13.0 || >=24"
++			},
++			"funding": {
++				"url": "https://eslint.org/donate"
++			},
++			"peerDependencies": {
++				"jiti": "*"
++			},
++			"peerDependenciesMeta": {
++				"jiti": {
++					"optional": true
++				}
++			}
++		},
++		"node_modules/eslint-plugin-react-hooks": {
++			"version": "7.1.1",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@babel/core": "^7.24.4",
++				"@babel/parser": "^7.24.4",
++				"hermes-parser": "^0.25.1",
++				"zod": "^3.25.0 || ^4.0.0",
++				"zod-validation-error": "^3.5.0 || ^4.0.0"
++			},
++			"engines": {
++				"node": ">=18"
++			},
++			"peerDependencies": {
++				"eslint": "^3.0.0 || ^4.0.0 || ^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0-0 || ^9.0.0 || ^10.0.0"
++			}
++		},
++		"node_modules/eslint-plugin-react-refresh": {
++			"version": "0.5.7",
++			"dev": true,
++			"license": "MIT",
++			"peerDependencies": {
++				"eslint": "^9 || ^10"
++			}
++		},
++		"node_modules/eslint-scope": {
++			"version": "9.1.2",
++			"dev": true,
++			"license": "BSD-2-Clause",
++			"dependencies": {
++				"@types/esrecurse": "^4.3.1",
++				"@types/estree": "^1.0.8",
++				"esrecurse": "^4.3.0",
++				"estraverse": "^5.2.0"
++			},
++			"engines": {
++				"node": "^20.19.0 || ^22.13.0 || >=24"
++			},
++			"funding": {
++				"url": "https://opencollective.com/eslint"
++			}
++		},
++		"node_modules/eslint-visitor-keys": {
++			"version": "5.0.1",
++			"dev": true,
++			"license": "Apache-2.0",
++			"engines": {
++				"node": "^20.19.0 || ^22.13.0 || >=24"
++			},
++			"funding": {
++				"url": "https://opencollective.com/eslint"
++			}
++		},
++		"node_modules/espree": {
++			"version": "11.2.0",
++			"dev": true,
++			"license": "BSD-2-Clause",
++			"dependencies": {
++				"acorn": "^8.16.0",
++				"acorn-jsx": "^5.3.2",
++				"eslint-visitor-keys": "^5.0.1"
++			},
++			"engines": {
++				"node": "^20.19.0 || ^22.13.0 || >=24"
++			},
++			"funding": {
++				"url": "https://opencollective.com/eslint"
++			}
++		},
++		"node_modules/esquery": {
++			"version": "1.7.0",
++			"dev": true,
++			"license": "BSD-3-Clause",
++			"dependencies": {
++				"estraverse": "^5.1.0"
++			},
++			"engines": {
++				"node": ">=0.10"
++			}
++		},
++		"node_modules/esrecurse": {
++			"version": "4.3.0",
++			"dev": true,
++			"license": "BSD-2-Clause",
++			"dependencies": {
++				"estraverse": "^5.2.0"
++			},
++			"engines": {
++				"node": ">=4.0"
++			}
++		},
++		"node_modules/estraverse": {
++			"version": "5.3.0",
++			"dev": true,
++			"license": "BSD-2-Clause",
++			"engines": {
++				"node": ">=4.0"
++			}
++		},
++		"node_modules/estree-walker": {
++			"version": "3.0.3",
++			"resolved": "https://registry.npmjs.org/estree-walker/-/estree-walker-3.0.3.tgz",
++			"integrity": "sha512-7RUKfXgSMMkzt6ZuXmqapOurLGPPfgj6l9uRZ7lRGolvk0y2yocc35LdcxKC5PQZdn2DMqioAQ2NoWcrTKmm6g==",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@types/estree": "^1.0.0"
++			}
++		},
++		"node_modules/esutils": {
++			"version": "2.0.3",
++			"dev": true,
++			"license": "BSD-2-Clause",
++			"engines": {
++				"node": ">=0.10.0"
++			}
++		},
++		"node_modules/expect-type": {
++			"version": "1.4.0",
++			"resolved": "https://registry.npmjs.org/expect-type/-/expect-type-1.4.0.tgz",
++			"integrity": "sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==",
++			"dev": true,
++			"license": "Apache-2.0",
++			"engines": {
++				"node": ">=12.0.0"
++			}
++		},
++		"node_modules/fast-deep-equal": {
++			"version": "3.1.3",
++			"dev": true,
++			"license": "MIT"
++		},
++		"node_modules/fast-json-stable-stringify": {
++			"version": "2.1.0",
++			"dev": true,
++			"license": "MIT"
++		},
++		"node_modules/fast-levenshtein": {
++			"version": "2.0.6",
++			"dev": true,
++			"license": "MIT"
++		},
++		"node_modules/fdir": {
++			"version": "6.5.0",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=12.0.0"
++			},
++			"peerDependencies": {
++				"picomatch": "^3 || ^4"
++			},
++			"peerDependenciesMeta": {
++				"picomatch": {
++					"optional": true
++				}
++			}
++		},
++		"node_modules/file-entry-cache": {
++			"version": "11.1.5",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"flat-cache": "^6.1.23"
++			}
++		},
++		"node_modules/find-up": {
++			"version": "5.0.0",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"locate-path": "^6.0.0",
++				"path-exists": "^4.0.0"
++			},
++			"engines": {
++				"node": ">=10"
++			},
++			"funding": {
++				"url": "https://github.com/sponsors/sindresorhus"
++			}
++		},
++		"node_modules/flat-cache": {
++			"version": "6.1.23",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"cacheable": "^2.5.0",
++				"flatted": "^3.4.2",
++				"hookified": "^1.15.0"
++			}
++		},
++		"node_modules/flatted": {
++			"version": "3.4.4",
++			"dev": true,
++			"license": "ISC"
++		},
++		"node_modules/follow-redirects": {
++			"version": "1.16.1",
++			"funding": [
++				{
++					"type": "individual",
++					"url": "https://github.com/sponsors/RubenVerborgh"
++				}
++			],
++			"license": "MIT",
++			"engines": {
++				"node": ">=4.0"
++			},
++			"peerDependenciesMeta": {
++				"debug": {
++					"optional": true
++				}
++			}
++		},
++		"node_modules/form-data": {
++			"version": "4.0.6",
++			"license": "MIT",
++			"dependencies": {
++				"asynckit": "^0.4.0",
++				"combined-stream": "^1.0.8",
++				"es-set-tostringtag": "^2.1.0",
++				"hasown": "^2.0.4",
++				"mime-types": "^2.1.35"
++			},
++			"engines": {
++				"node": ">= 6"
++			}
++		},
++		"node_modules/function-bind": {
++			"version": "1.1.2",
++			"license": "MIT",
++			"funding": {
++				"url": "https://github.com/sponsors/ljharb"
++			}
++		},
++		"node_modules/gensync": {
++			"version": "1.0.0-beta.2",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=6.9.0"
++			}
++		},
++		"node_modules/get-intrinsic": {
++			"version": "1.3.0",
++			"license": "MIT",
++			"dependencies": {
++				"call-bind-apply-helpers": "^1.0.2",
++				"es-define-property": "^1.0.1",
++				"es-errors": "^1.3.0",
++				"es-object-atoms": "^1.1.1",
++				"function-bind": "^1.1.2",
++				"get-proto": "^1.0.1",
++				"gopd": "^1.2.0",
++				"has-symbols": "^1.1.0",
++				"hasown": "^2.0.2",
++				"math-intrinsics": "^1.1.0"
++			},
++			"engines": {
++				"node": ">= 0.4"
++			},
++			"funding": {
++				"url": "https://github.com/sponsors/ljharb"
++			}
++		},
++		"node_modules/get-proto": {
++			"version": "1.0.1",
++			"license": "MIT",
++			"dependencies": {
++				"dunder-proto": "^1.0.1",
++				"es-object-atoms": "^1.0.0"
++			},
++			"engines": {
++				"node": ">= 0.4"
++			}
++		},
++		"node_modules/glob-parent": {
++			"version": "6.0.2",
++			"dev": true,
++			"license": "ISC",
++			"dependencies": {
++				"is-glob": "^4.0.3"
++			},
++			"engines": {
++				"node": ">=10.13.0"
++			}
++		},
++		"node_modules/globals": {
++			"version": "17.13.0",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=18"
++			},
++			"funding": {
++				"url": "https://github.com/sponsors/sindresorhus"
++			}
++		},
++		"node_modules/gopd": {
++			"version": "1.2.0",
++			"license": "MIT",
++			"engines": {
++				"node": ">= 0.4"
++			},
++			"funding": {
++				"url": "https://github.com/sponsors/ljharb"
++			}
++		},
++		"node_modules/has-symbols": {
++			"version": "1.1.0",
++			"license": "MIT",
++			"engines": {
++				"node": ">= 0.4"
++			},
++			"funding": {
++				"url": "https://github.com/sponsors/ljharb"
++			}
++		},
++		"node_modules/has-tostringtag": {
++			"version": "1.0.2",
++			"license": "MIT",
++			"dependencies": {
++				"has-symbols": "^1.0.3"
++			},
++			"engines": {
++				"node": ">= 0.4"
++			},
++			"funding": {
++				"url": "https://github.com/sponsors/ljharb"
++			}
++		},
++		"node_modules/hashery": {
++			"version": "1.5.1",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"hookified": "^1.15.0"
++			},
++			"engines": {
++				"node": ">=20"
++			}
++		},
++		"node_modules/hasown": {
++			"version": "2.0.4",
++			"license": "MIT",
++			"dependencies": {
++				"function-bind": "^1.1.2"
++			},
++			"engines": {
++				"node": ">= 0.4"
++			}
++		},
++		"node_modules/hermes-estree": {
++			"version": "0.25.1",
++			"dev": true,
++			"license": "MIT"
++		},
++		"node_modules/hermes-parser": {
++			"version": "0.25.1",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"hermes-estree": "0.25.1"
++			}
++		},
++		"node_modules/hookified": {
++			"version": "1.15.1",
++			"dev": true,
++			"license": "MIT"
++		},
++		"node_modules/html2canvas": {
++			"version": "1.4.1",
++			"license": "MIT",
++			"dependencies": {
++				"css-line-break": "^2.1.0",
++				"text-segmentation": "^1.0.3"
++			},
++			"engines": {
++				"node": ">=8.0.0"
++			}
++		},
++		"node_modules/https-proxy-agent": {
++			"version": "5.0.1",
++			"license": "MIT",
++			"dependencies": {
++				"agent-base": "6",
++				"debug": "4"
++			},
++			"engines": {
++				"node": ">= 6"
++			}
++		},
++		"node_modules/ignore": {
++			"version": "5.3.2",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">= 4"
++			}
++		},
++		"node_modules/imurmurhash": {
++			"version": "0.1.4",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=0.8.19"
++			}
++		},
++		"node_modules/is-extglob": {
++			"version": "2.1.1",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=0.10.0"
++			}
++		},
++		"node_modules/is-glob": {
++			"version": "4.0.3",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"is-extglob": "^2.1.1"
++			},
++			"engines": {
++				"node": ">=0.10.0"
++			}
++		},
++		"node_modules/isexe": {
++			"version": "2.0.0",
++			"dev": true,
++			"license": "ISC"
++		},
++		"node_modules/js-tokens": {
++			"version": "4.0.0",
++			"license": "MIT"
++		},
++		"node_modules/jsesc": {
++			"version": "3.1.0",
++			"dev": true,
++			"license": "MIT",
++			"bin": {
++				"jsesc": "bin/jsesc"
++			},
++			"engines": {
++				"node": ">=6"
++			}
++		},
++		"node_modules/json-schema-traverse": {
++			"version": "0.4.1",
++			"dev": true,
++			"license": "MIT"
++		},
++		"node_modules/json-stable-stringify-without-jsonify": {
++			"version": "1.0.1",
++			"dev": true,
++			"license": "MIT"
++		},
++		"node_modules/json5": {
++			"version": "2.2.3",
++			"dev": true,
++			"license": "MIT",
++			"bin": {
++				"json5": "lib/cli.js"
++			},
++			"engines": {
++				"node": ">=6"
++			}
++		},
++		"node_modules/keyv": {
++			"version": "5.6.0",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@keyv/serialize": "^1.1.1"
++			}
++		},
++		"node_modules/levn": {
++			"version": "0.4.1",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"prelude-ls": "^1.2.1",
++				"type-check": "~0.4.0"
++			},
++			"engines": {
++				"node": ">= 0.8.0"
++			}
++		},
++		"node_modules/lightningcss": {
++			"version": "1.33.0",
++			"dev": true,
++			"license": "MPL-2.0",
++			"dependencies": {
++				"detect-libc": "^2.0.3"
++			},
++			"engines": {
++				"node": ">= 12.0.0"
++			},
++			"funding": {
++				"type": "opencollective",
++				"url": "https://opencollective.com/parcel"
++			},
++			"optionalDependencies": {
++				"lightningcss-android-arm64": "1.33.0",
++				"lightningcss-darwin-arm64": "1.33.0",
++				"lightningcss-darwin-x64": "1.33.0",
++				"lightningcss-freebsd-x64": "1.33.0",
++				"lightningcss-linux-arm-gnueabihf": "1.33.0",
++				"lightningcss-linux-arm64-gnu": "1.33.0",
++				"lightningcss-linux-arm64-musl": "1.33.0",
++				"lightningcss-linux-x64-gnu": "1.33.0",
++				"lightningcss-linux-x64-musl": "1.33.0",
++				"lightningcss-win32-arm64-msvc": "1.33.0",
++				"lightningcss-win32-x64-msvc": "1.33.0"
++			}
++		},
++		"node_modules/lightningcss-linux-x64-gnu": {
++			"version": "1.33.0",
++			"cpu": [
++				"x64"
++			],
++			"dev": true,
++			"license": "MPL-2.0",
++			"optional": true,
++			"os": [
++				"linux"
++			],
++			"engines": {
++				"node": ">= 12.0.0"
++			},
++			"funding": {
++				"type": "opencollective",
++				"url": "https://opencollective.com/parcel"
++			}
++		},
++		"node_modules/lightningcss-linux-x64-musl": {
++			"version": "1.33.0",
++			"cpu": [
++				"x64"
++			],
++			"dev": true,
++			"license": "MPL-2.0",
++			"optional": true,
++			"os": [
++				"linux"
++			],
++			"engines": {
++				"node": ">= 12.0.0"
++			},
++			"funding": {
++				"type": "opencollective",
++				"url": "https://opencollective.com/parcel"
++			}
++		},
++		"node_modules/locate-path": {
++			"version": "6.0.0",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"p-locate": "^5.0.0"
++			},
++			"engines": {
++				"node": ">=10"
++			},
++			"funding": {
++				"url": "https://github.com/sponsors/sindresorhus"
++			}
++		},
++		"node_modules/loose-envify": {
++			"version": "1.4.0",
++			"license": "MIT",
++			"dependencies": {
++				"js-tokens": "^3.0.0 || ^4.0.0"
++			},
++			"bin": {
++				"loose-envify": "cli.js"
++			}
++		},
++		"node_modules/lru-cache": {
++			"version": "5.1.1",
++			"dev": true,
++			"license": "ISC",
++			"dependencies": {
++				"yallist": "^3.0.2"
++			}
++		},
++		"node_modules/lucide-react": {
++			"version": "1.61.0",
++			"license": "ISC",
++			"peerDependencies": {
++				"@types/react": "*",
++				"react": "^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0"
++			},
++			"peerDependenciesMeta": {
++				"@types/react": {
++					"optional": true
++				}
++			}
++		},
++		"node_modules/magic-string": {
++			"version": "1.4.3",
++			"resolved": "https://registry.npmjs.org/magic-string/-/magic-string-1.4.3.tgz",
++			"integrity": "sha512-z12OxmaPGE0F4xlpGdjuAUckipLpQlTAuAmyGhNoD7ODpYUzvDfvtxUbjM/jwznyP178oju/KDdyi220wNJ0RQ==",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@jridgewell/sourcemap-codec": "^1.6.0"
++			}
++		},
++		"node_modules/math-intrinsics": {
++			"version": "1.1.0",
++			"license": "MIT",
++			"engines": {
++				"node": ">= 0.4"
++			}
++		},
++		"node_modules/mime-db": {
++			"version": "1.52.0",
++			"license": "MIT",
++			"engines": {
++				"node": ">= 0.6"
++			}
++		},
++		"node_modules/mime-types": {
++			"version": "2.1.35",
++			"license": "MIT",
++			"dependencies": {
++				"mime-db": "1.52.0"
++			},
++			"engines": {
++				"node": ">= 0.6"
++			}
++		},
++		"node_modules/minimatch": {
++			"version": "10.2.6",
++			"dev": true,
++			"license": "BlueOak-1.0.0",
++			"dependencies": {
++				"brace-expansion": "^5.0.8"
++			},
++			"engines": {
++				"node": "18 || 20 || >=22"
++			},
++			"funding": {
++				"url": "https://github.com/sponsors/isaacs"
++			}
++		},
++		"node_modules/ms": {
++			"version": "2.1.3",
++			"license": "MIT"
++		},
++		"node_modules/nanoid": {
++			"version": "3.3.20",
++			"dev": true,
++			"funding": [
++				{
++					"type": "github",
++					"url": "https://github.com/sponsors/ai"
++				}
++			],
++			"license": "MIT",
++			"bin": {
++				"nanoid": "bin/nanoid.cjs"
++			},
++			"engines": {
++				"node": "^10 || ^12 || ^13.7 || ^14 || >=15.0.1"
++			}
++		},
++		"node_modules/natural-compare": {
++			"version": "1.4.0",
++			"dev": true,
++			"license": "MIT"
++		},
++		"node_modules/node-releases": {
++			"version": "2.0.60",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=18"
++			}
++		},
++		"node_modules/object-assign": {
++			"version": "4.1.1",
++			"license": "MIT",
++			"engines": {
++				"node": ">=0.10.0"
++			}
++		},
++		"node_modules/obug": {
++			"version": "3.0.0",
++			"resolved": "https://registry.npmjs.org/obug/-/obug-3.0.0.tgz",
++			"integrity": "sha512-5vvB5+W7ePv+p3uqxi+RcW1XAzLW0/hxt3/4X4Lc4qHudzOhmBiBwOY6DRob4WnanAEGvNcLjF+KNOufrUoEQw==",
++			"dev": true,
++			"funding": [
++				"https://github.com/sponsors/sxzz",
++				"https://opencollective.com/debug"
++			],
++			"license": "MIT",
++			"engines": {
++				"node": ">=12.20.0"
++			}
++		},
++		"node_modules/optionator": {
++			"version": "0.9.4",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"deep-is": "^0.1.3",
++				"fast-levenshtein": "^2.0.6",
++				"levn": "^0.4.1",
++				"prelude-ls": "^1.2.1",
++				"type-check": "^0.4.0",
++				"word-wrap": "^1.2.5"
++			},
++			"engines": {
++				"node": ">= 0.8.0"
++			}
++		},
++		"node_modules/p-limit": {
++			"version": "3.1.0",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"yocto-queue": "^0.1.0"
++			},
++			"engines": {
++				"node": ">=10"
++			},
++			"funding": {
++				"url": "https://github.com/sponsors/sindresorhus"
++			}
++		},
++		"node_modules/p-locate": {
++			"version": "5.0.0",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"p-limit": "^3.0.2"
++			},
++			"engines": {
++				"node": ">=10"
++			},
++			"funding": {
++				"url": "https://github.com/sponsors/sindresorhus"
++			}
++		},
++		"node_modules/path-exists": {
++			"version": "4.0.0",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=8"
++			}
++		},
++		"node_modules/path-key": {
++			"version": "3.1.1",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=8"
++			}
++		},
++		"node_modules/picocolors": {
++			"version": "1.1.1",
++			"dev": true,
++			"license": "ISC"
++		},
++		"node_modules/picomatch": {
++			"version": "4.0.7",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=12"
++			},
++			"funding": {
++				"url": "https://github.com/sponsors/jonschlinkert"
++			}
++		},
++		"node_modules/postcss": {
++			"version": "8.5.31",
++			"dev": true,
++			"funding": [
++				{
++					"type": "opencollective",
++					"url": "https://opencollective.com/postcss/"
++				},
++				{
++					"type": "tidelift",
++					"url": "https://tidelift.com/funding/github/npm/postcss"
++				},
++				{
++					"type": "github",
++					"url": "https://github.com/sponsors/ai"
++				}
++			],
++			"license": "MIT",
++			"dependencies": {
++				"nanoid": "^3.3.20",
++				"picocolors": "^1.1.1",
++				"source-map-js": "^1.2.2"
++			},
++			"engines": {
++				"node": "^10 || ^12 || >=14"
++			}
++		},
++		"node_modules/prelude-ls": {
++			"version": "1.2.1",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">= 0.8.0"
++			}
++		},
++		"node_modules/prettier": {
++			"version": "3.9.10",
++			"resolved": "https://registry.npmjs.org/prettier/-/prettier-3.9.10.tgz",
++			"integrity": "sha512-skGHTH1Yb9QvaTC4hWnRTzEYtCpApF0UMBPz+t/0ZPzP8ihefo/btKd+QA7pUE0fEwA1SbS/NmhyEcstdXOIdA==",
++			"dev": true,
++			"license": "MIT",
++			"bin": {
++				"prettier": "bin/prettier.cjs"
++			},
++			"engines": {
++				"node": ">=14"
++			},
++			"funding": {
++				"url": "https://github.com/prettier/prettier?sponsor=1"
++			}
++		},
++		"node_modules/prop-types": {
++			"version": "15.8.1",
++			"license": "MIT",
++			"dependencies": {
++				"loose-envify": "^1.4.0",
++				"object-assign": "^4.1.1",
++				"react-is": "^16.13.1"
++			}
++		},
++		"node_modules/proxy-from-env": {
++			"version": "2.1.0",
++			"license": "MIT",
++			"engines": {
++				"node": ">=10"
++			}
++		},
++		"node_modules/punycode": {
++			"version": "2.3.1",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=6"
++			}
++		},
++		"node_modules/qified": {
++			"version": "0.10.1",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"hookified": "^2.1.1"
++			},
++			"engines": {
++				"node": ">=20"
++			}
++		},
++		"node_modules/qified/node_modules/hookified": {
++			"version": "2.2.0",
++			"dev": true,
++			"license": "MIT"
++		},
++		"node_modules/react": {
++			"version": "19.3.1",
++			"license": "MIT",
++			"engines": {
++				"node": ">=0.10.0"
++			}
++		},
++		"node_modules/react-dom": {
++			"version": "19.3.1",
++			"license": "MIT",
++			"dependencies": {
++				"scheduler": "^0.28.0"
++			},
++			"peerDependencies": {
++				"react": "^19.3.1"
++			}
++		},
++		"node_modules/react-is": {
++			"version": "16.13.1",
++			"license": "MIT"
++		},
++		"node_modules/react-router": {
++			"version": "7.18.4",
++			"license": "MIT",
++			"dependencies": {
++				"cookie": "^1.0.1",
++				"set-cookie-parser": "^2.6.0"
++			},
++			"engines": {
++				"node": ">=20.0.0"
++			},
++			"peerDependencies": {
++				"react": ">=18",
++				"react-dom": ">=18"
++			},
++			"peerDependenciesMeta": {
++				"react-dom": {
++					"optional": true
++				}
++			}
++		},
++		"node_modules/react-router-dom": {
++			"version": "7.18.4",
++			"license": "MIT",
++			"dependencies": {
++				"react-router": "7.18.4"
++			},
++			"engines": {
++				"node": ">=20.0.0"
++			},
++			"peerDependencies": {
++				"react": ">=18",
++				"react-dom": ">=18"
++			}
++		},
++		"node_modules/react-swipeable-list": {
++			"version": "1.10.0",
++			"license": "MIT"
++		},
++		"node_modules/rolldown": {
++			"version": "1.2.15",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@oxc-project/types": "=0.155.0",
++				"@rolldown/pluginutils": "^1.0.0"
++			},
++			"bin": {
++				"rolldown": "bin/cli.mjs"
++			},
++			"engines": {
++				"node": "^20.19.0 || >=22.12.0"
++			},
++			"optionalDependencies": {
++				"@rolldown/binding-android-arm-eabi": "1.2.15",
++				"@rolldown/binding-android-arm64": "1.2.15",
++				"@rolldown/binding-darwin-arm64": "1.2.15",
++				"@rolldown/binding-darwin-x64": "1.2.15",
++				"@rolldown/binding-freebsd-x64": "1.2.15",
++				"@rolldown/binding-linux-arm-gnueabihf": "1.2.15",
++				"@rolldown/binding-linux-arm64-gnu": "1.2.15",
++				"@rolldown/binding-linux-arm64-musl": "1.2.15",
++				"@rolldown/binding-linux-ppc64-gnu": "1.2.15",
++				"@rolldown/binding-linux-s390x-gnu": "1.2.15",
++				"@rolldown/binding-linux-x64-gnu": "1.2.15",
++				"@rolldown/binding-linux-x64-musl": "1.2.15",
++				"@rolldown/binding-openharmony-arm64": "1.2.15",
++				"@rolldown/binding-win32-arm64-msvc": "1.2.15",
++				"@rolldown/binding-win32-x64-msvc": "1.2.15"
++			}
++		},
++		"node_modules/scheduler": {
++			"version": "0.28.0",
++			"license": "MIT"
++		},
++		"node_modules/semver": {
++			"version": "6.3.1",
++			"dev": true,
++			"license": "ISC",
++			"bin": {
++				"semver": "bin/semver.js"
++			}
++		},
++		"node_modules/set-cookie-parser": {
++			"version": "2.7.2",
++			"license": "MIT"
++		},
++		"node_modules/shebang-command": {
++			"version": "2.0.0",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"shebang-regex": "^3.0.0"
++			},
++			"engines": {
++				"node": ">=8"
++			}
++		},
++		"node_modules/shebang-regex": {
++			"version": "3.0.0",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=8"
++			}
++		},
++		"node_modules/source-map-js": {
++			"version": "1.2.2",
++			"dev": true,
++			"license": "BSD-3-Clause",
++			"engines": {
++				"node": ">=0.10.0"
++			}
++		},
++		"node_modules/std-env": {
++			"version": "4.3.0",
++			"resolved": "https://registry.npmjs.org/std-env/-/std-env-4.3.0.tgz",
++			"integrity": "sha512-OtU/EgQ1kIm5KwqQpBC6ZEMXrZRui11w8zgfTWp8cdO9B8OaPsbA8bTHO2P+HNo1VlUTGMVBwPhydu6poeXiag==",
++			"dev": true,
++			"license": "MIT"
++		},
++		"node_modules/text-segmentation": {
++			"version": "1.0.3",
++			"license": "MIT",
++			"dependencies": {
++				"utrie": "^1.0.2"
++			}
++		},
++		"node_modules/tinybench": {
++			"version": "6.2.2",
++			"resolved": "https://registry.npmjs.org/tinybench/-/tinybench-6.2.2.tgz",
++			"integrity": "sha512-nIZ2N2dFpjBsg2hgitKu7mA+FvsIJuGJOwysRngmVRRmWgR/UyPjwJj8c/fT/dhm8EkHnF5EOogRf+0Z2qrimA==",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=20.0.0"
++			}
++		},
++		"node_modules/tinyexec": {
++			"version": "1.3.1",
++			"resolved": "https://registry.npmjs.org/tinyexec/-/tinyexec-1.3.1.tgz",
++			"integrity": "sha512-GCvB3aoys96IuDFBMcTB46JOR6mdMtAToqwiW8JlWhsoh1mhHi/xn9ss/Dg7N555GiJyEt2qzoG/NHCwM6h1EA==",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=18"
++			}
++		},
++		"node_modules/tinyglobby": {
++			"version": "0.2.17",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"fdir": "^6.5.0",
++				"picomatch": "^4.0.4"
++			},
++			"engines": {
++				"node": ">=12.0.0"
++			},
++			"funding": {
++				"url": "https://github.com/sponsors/SuperchupuDev"
++			}
++		},
++		"node_modules/tslib": {
++			"version": "2.8.1",
++			"license": "0BSD"
++		},
++		"node_modules/type-check": {
++			"version": "0.4.0",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"prelude-ls": "^1.2.1"
++			},
++			"engines": {
++				"node": ">= 0.8.0"
++			}
++		},
++		"node_modules/update-browserslist-db": {
++			"version": "1.3.4",
++			"dev": true,
++			"funding": [
++				{
++					"type": "opencollective",
++					"url": "https://opencollective.com/browserslist"
++				},
++				{
++					"type": "tidelift",
++					"url": "https://tidelift.com/funding/github/npm/browserslist"
++				},
++				{
++					"type": "github",
++					"url": "https://github.com/sponsors/ai"
++				}
++			],
++			"license": "MIT",
++			"dependencies": {
++				"escalade": "^3.2.0",
++				"picocolors": "^1.1.1"
++			},
++			"bin": {
++				"update-browserslist-db": "cli.js"
++			},
++			"peerDependencies": {
++				"browserslist": ">= 4.21.0"
++			}
++		},
++		"node_modules/uri-js": {
++			"version": "4.4.1",
++			"dev": true,
++			"license": "BSD-2-Clause",
++			"dependencies": {
++				"punycode": "^2.1.0"
++			}
++		},
++		"node_modules/utrie": {
++			"version": "1.0.2",
++			"license": "MIT",
++			"dependencies": {
++				"base64-arraybuffer": "^1.0.2"
++			}
++		},
++		"node_modules/vite": {
++			"version": "8.3.5",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"lightningcss": "^1.33.0",
++				"picomatch": "^4.0.7",
++				"postcss": "^8.5.30",
++				"rolldown": "~1.2.14",
++				"tinyglobby": "^0.2.17"
++			},
++			"bin": {
++				"vite": "bin/vite.js"
++			},
++			"engines": {
++				"node": "^20.19.0 || >=22.12.0"
++			},
++			"funding": {
++				"url": "https://github.com/vitejs/vite?sponsor=1"
++			},
++			"optionalDependencies": {
++				"fsevents": "~2.3.3"
++			},
++			"peerDependencies": {
++				"@types/node": "^20.19.0 || >=22.12.0",
++				"@vitejs/devtools": "^0.7.1 || ^0.8.0",
++				"esbuild": "^0.27.0 || ^0.28.0",
++				"jiti": ">=1.21.0",
++				"less": "^4.0.0",
++				"sass": "^1.70.0",
++				"sass-embedded": "^1.70.0",
++				"stylus": ">=0.54.8",
++				"sugarss": "^5.0.0",
++				"terser": "^5.16.0",
++				"tsx": "^4.8.1",
++				"yaml": "^2.4.2"
++			},
++			"peerDependenciesMeta": {
++				"@types/node": {
++					"optional": true
++				},
++				"@vitejs/devtools": {
++					"optional": true
++				},
++				"esbuild": {
++					"optional": true
++				},
++				"jiti": {
++					"optional": true
++				},
++				"less": {
++					"optional": true
++				},
++				"sass": {
++					"optional": true
++				},
++				"sass-embedded": {
++					"optional": true
++				},
++				"stylus": {
++					"optional": true
++				},
++				"sugarss": {
++					"optional": true
++				},
++				"terser": {
++					"optional": true
++				},
++				"tsx": {
++					"optional": true
++				},
++				"yaml": {
++					"optional": true
++				}
++			}
++		},
++		"node_modules/vitest": {
++			"version": "5.0.5",
++			"resolved": "https://registry.npmjs.org/vitest/-/vitest-5.0.5.tgz",
++			"integrity": "sha512-cPODOMF8YnkiiYtDdHo6n4wWmBrOBBbOIYH2d33M4l3CdNn72h+qMmO6uXffUN6A5AZFXNND/d+krS9mgkXRfg==",
++			"dev": true,
++			"license": "MIT",
++			"dependencies": {
++				"@types/chai": "^5.2.2",
++				"@vitest/mocker": "5.0.5",
++				"chai": "^6.3.0",
++				"es-module-lexer": "^2.3.2",
++				"expect-type": "^1.4.0",
++				"magic-string": "^1.4.3",
++				"obug": "^3.0.0",
++				"picomatch": "^4.0.7",
++				"std-env": "^4.3.0",
++				"tinybench": "^6.2.2",
++				"tinyexec": "^1.3.1",
++				"tinyglobby": "^0.2.17",
++				"why-is-node-running": "3.2.1"
++			},
++			"bin": {
++				"vitest": "vitest.mjs"
++			},
++			"engines": {
++				"node": "^22.12.0 || ^24.0.0 || >=26.0.0"
++			},
++			"funding": {
++				"url": "https://opencollective.com/vitest"
++			},
++			"peerDependencies": {
++				"@edge-runtime/vm": "*",
++				"@opentelemetry/api": "^1.9.0",
++				"@types/node": "^22.0.0 || >=24.0.0",
++				"@vitest/browser-playwright": "5.0.5",
++				"@vitest/browser-preview": "5.0.5",
++				"@vitest/browser-webdriverio": "^5.0.0-beta.5 || >=5.0.0",
++				"@vitest/coverage-istanbul": "5.0.5",
++				"@vitest/coverage-v8": "5.0.5",
++				"@vitest/ui": "5.0.5",
++				"happy-dom": "*",
++				"jsdom": "*",
++				"vite": "^6.4.0 || ^7.0.0 || ^8.0.0"
++			},
++			"peerDependenciesMeta": {
++				"@edge-runtime/vm": {
++					"optional": true
++				},
++				"@opentelemetry/api": {
++					"optional": true
++				},
++				"@types/node": {
++					"optional": true
++				},
++				"@vitest/browser-playwright": {
++					"optional": true
++				},
++				"@vitest/browser-preview": {
++					"optional": true
++				},
++				"@vitest/browser-webdriverio": {
++					"optional": true
++				},
++				"@vitest/coverage-istanbul": {
++					"optional": true
++				},
++				"@vitest/coverage-v8": {
++					"optional": true
++				},
++				"@vitest/ui": {
++					"optional": true
++				},
++				"happy-dom": {
++					"optional": true
++				},
++				"jsdom": {
++					"optional": true
++				},
++				"vite": {
++					"optional": false
++				}
++			}
++		},
++		"node_modules/which": {
++			"version": "2.0.2",
++			"dev": true,
++			"license": "ISC",
++			"dependencies": {
++				"isexe": "^2.0.0"
++			},
++			"bin": {
++				"node-which": "bin/node-which"
++			},
++			"engines": {
++				"node": ">= 8"
++			}
++		},
++		"node_modules/why-is-node-running": {
++			"version": "3.2.1",
++			"resolved": "https://registry.npmjs.org/why-is-node-running/-/why-is-node-running-3.2.1.tgz",
++			"integrity": "sha512-Tb2FUhB4vUsGQlfSquQLYkApkuPAFQXGFzxWKHHumVz2dK+X1RUm/HnID4+TfIGYJ1kTcwOaCk/buYCEJr6YjQ==",
++			"dev": true,
++			"license": "MIT",
++			"bin": {
++				"why-is-node-running": "cli.js"
++			},
++			"engines": {
++				"node": ">=20.11"
++			}
++		},
++		"node_modules/word-wrap": {
++			"version": "1.2.5",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=0.10.0"
++			}
++		},
++		"node_modules/yallist": {
++			"version": "3.1.1",
++			"dev": true,
++			"license": "ISC"
++		},
++		"node_modules/yocto-queue": {
++			"version": "0.1.0",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=10"
++			},
++			"funding": {
++				"url": "https://github.com/sponsors/sindresorhus"
++			}
++		},
++		"node_modules/zod": {
++			"version": "4.6.7",
++			"dev": true,
++			"license": "MIT",
++			"funding": {
++				"url": "https://github.com/sponsors/colinhacks"
++			}
++		},
++		"node_modules/zod-validation-error": {
++			"version": "4.0.2",
++			"dev": true,
++			"license": "MIT",
++			"engines": {
++				"node": ">=18.0.0"
++			},
++			"peerDependencies": {
++				"zod": "^3.25.0 || ^4.0.0"
++			}
++		}
++	}
++}
+diff --git a/frontend/package.json b/frontend/package.json
+index b730531..839d5f8 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -7,11 +7,17 @@
+ 		"dev": "vite",
+ 		"build": "vite build",
+ 		"lint": "eslint .",
+-		"preview": "vite preview"
++		"preview": "vite preview",
++		"test": "vitest run",
++		"test:watch": "vitest",
++		"format": "prettier --write src",
++		"format:check": "prettier --check src"
+ 	},
+ 	"dependencies": {
+ 		"@capacitor/core": "^8.5.2",
++		"@capacitor/filesystem": "^8.1.5",
+ 		"@capacitor/haptics": "^8.0.2",
++		"@capacitor/share": "^8.0.3",
+ 		"axios": "^1.20.0",
+ 		"html2canvas": "^1.4.1",
+ 		"lucide-react": "^1.46.0",
+@@ -30,6 +36,8 @@
+ 		"eslint-plugin-react-hooks": "^7.1.1",
+ 		"eslint-plugin-react-refresh": "^0.5.6",
+ 		"globals": "^17.12.0",
+-		"vite": "^8.3.0"
++		"prettier": "^3.9.10",
++		"vite": "^8.3.0",
++		"vitest": "^5.0.5"
+ 	}
+ }
+diff --git a/frontend/src/App.jsx b/frontend/src/App.jsx
+index bda6243..25497da 100644
+--- a/frontend/src/App.jsx
++++ b/frontend/src/App.jsx
+@@ -4,12 +4,8 @@ import { BrowserRouter as Router, Route, Routes } from "react-router-dom";
+ 
+ import Home from "./pages/Home/Home.jsx";
+ 
+-const BlockBlastApp = lazy(
+-	() => import("./features/block_blast_solver/BlockBlastApp.jsx"),
+-);
+-const DeptApp = lazy(
+-	() => import("./features/dept_simplification/DeptApp.jsx"),
+-);
++const BlockBlastApp = lazy(() => import("./features/block_blast_solver/BlockBlastApp.jsx"));
++const DeptApp = lazy(() => import("./features/dept_simplification/DeptApp.jsx"));
+ 
+ function LoadingFallback() {
+ 	return <p role="status">模組載入中...</p>;
+diff --git a/frontend/src/features/dept_simplification/components/Toast.jsx b/frontend/src/components/Toast/Toast.jsx
+similarity index 100%
+rename from frontend/src/features/dept_simplification/components/Toast.jsx
+rename to frontend/src/components/Toast/Toast.jsx
+diff --git a/frontend/src/features/dept_simplification/components/Toast.module.css b/frontend/src/components/Toast/Toast.module.css
+similarity index 100%
+rename from frontend/src/features/dept_simplification/components/Toast.module.css
+rename to frontend/src/components/Toast/Toast.module.css
+diff --git a/frontend/src/features/block_blast_solver/BlockBlastApp.jsx b/frontend/src/features/block_blast_solver/BlockBlastApp.jsx
+index 17e4038..c85c3cc 100644
+--- a/frontend/src/features/block_blast_solver/BlockBlastApp.jsx
++++ b/frontend/src/features/block_blast_solver/BlockBlastApp.jsx
+@@ -1,6 +1,7 @@
+ import { Camera } from "lucide-react";
+ 
+ import BackButton from "../../components/BackButton/BackButton";
++import Toast from "../../components/Toast/Toast";
+ import styles from "./BlockBlastApp.module.css";
+ import { useBlockBlast } from "./useBlockBlast";
+ 
+@@ -9,11 +10,7 @@ const MiniBlock = ({ matrix }) => (
+ 		{matrix.map((row, r) => (
+ 			<div key={r} className={styles.miniRow}>
+ 				{row.map((val, c) => (
+-					<div
+-						key={c}
+-						className={styles.miniCell}
+-						data-filled={val ? "true" : "false"}
+-					/>
++					<div key={c} className={styles.miniCell} data-filled={val ? "true" : "false"} />
+ 				))}
+ 			</div>
+ 		))}
+@@ -30,8 +27,10 @@ export default function BlockBlastApp() {
+ 		loading,
+ 		overlay,
+ 		setActiveSlot,
+-		handleMouseDown,
+-		handleMouseEnter,
++		toast,
++		dismissToast,
++		handleBoardPointerDown,
++		handleBoardPointerMove,
+ 		handlePickBlock,
+ 		handleSolve,
+ 		clearBoard,
+@@ -50,7 +49,11 @@ export default function BlockBlastApp() {
+ 				網格來快速設定藍色方塊。點擊下方三個框框選擇你要放入的圖形。
+ 			</p>
+ 
+-			<div className={styles.board}>
++			<div
++				className={styles.board}
++				onPointerDown={handleBoardPointerDown}
++				onPointerMove={handleBoardPointerMove}
++			>
+ 				{board.map((row, r) =>
+ 					row.map((cell, c) => {
+ 						const overlaySteps = overlay[r][c];
+@@ -60,10 +63,10 @@ export default function BlockBlastApp() {
+ 							<div
+ 								key={`${r}-${c}`}
+ 								className={styles.cell}
++								data-row={r}
++								data-col={c}
+ 								data-filled={cell === 1 ? "true" : undefined}
+ 								data-step={step}
+-								onMouseDown={() => handleMouseDown(r, c)}
+-								onMouseEnter={() => handleMouseEnter(r, c)}
+ 							>
+ 								{stepText}
+ 							</div>
+@@ -75,25 +78,15 @@ export default function BlockBlastApp() {
+ 			<div className={styles.slots}>
+ 				{[0, 1, 2].map((slotIndex) => {
+ 					const blockId = selectedBlocks[slotIndex];
+-					const blockData = availableBlocks.find(
+-						(b) => b.id === blockId,
+-					);
++					const blockData = availableBlocks.find((b) => b.id === blockId);
+ 					return (
+ 						<div
+ 							key={slotIndex}
+ 							className={styles.slot}
+ 							data-active={activeSlot === slotIndex ? "true" : undefined}
+-							onClick={() =>
+-								setActiveSlot(
+-									activeSlot === slotIndex ? null : slotIndex,
+-								)
+-							}
++							onClick={() => setActiveSlot(activeSlot === slotIndex ? null : slotIndex)}
+ 						>
+-							{blockData ? (
+-								<MiniBlock matrix={blockData.matrix} />
+-							) : (
+-								"點擊選擇"
+-							)}
++							{blockData ? <MiniBlock matrix={blockData.matrix} /> : "點擊選擇"}
+ 						</div>
+ 					);
+ 				})}
+@@ -114,11 +107,7 @@ export default function BlockBlastApp() {
+ 			)}
+ 
+ 			<div className={styles.actions}>
+-				<button
+-					className={styles.button}
+-					onClick={handleSolve}
+-					disabled={loading}
+-				>
++				<button className={styles.button} onClick={handleSolve} disabled={loading}>
+ 					{loading ? "計算中..." : "計算最佳解"}
+ 				</button>
+ 				<button className={styles.button} data-variant="fill" onClick={fillBoard}>
+@@ -127,12 +116,7 @@ export default function BlockBlastApp() {
+ 				<label className={styles.button} data-variant="camera">
+ 					<Camera size={20} />
+ 					截圖辨識
+-					<input
+-						type="file"
+-						accept="image/*"
+-						onChange={handleImageUpload}
+-						hidden
+-					/>
++					<input type="file" accept="image/*" onChange={handleImageUpload} hidden />
+ 				</label>
+ 				<button className={styles.button} data-variant="clear" onClick={clearBoard}>
+ 					清空盤面
+@@ -145,17 +129,16 @@ export default function BlockBlastApp() {
+ 						<div>
+ 							<h3 className={styles.resultTitle}>解答完成！</h3>
+ 							<p>
+-								請參考上方盤面的數字順序 <b>1 → 2 → 3</b>{" "}
+-								放入方塊。
++								請參考上方盤面的數字順序 <b>1 → 2 → 3</b> 放入方塊。
+ 							</p>
+ 						</div>
+ 					) : (
+-						<p className={styles.error}>
+-							{solution.message}
+-						</p>
++						<p className={styles.error}>{solution.message}</p>
+ 					)}
+ 				</div>
+ 			)}
++
++			<Toast toast={toast} onClose={dismissToast} />
+ 		</div>
+ 	);
+ }
+diff --git a/frontend/src/features/block_blast_solver/BlockBlastApp.module.css b/frontend/src/features/block_blast_solver/BlockBlastApp.module.css
+index 155932a..ebd69df 100644
+--- a/frontend/src/features/block_blast_solver/BlockBlastApp.module.css
++++ b/frontend/src/features/block_blast_solver/BlockBlastApp.module.css
+@@ -34,6 +34,8 @@
+ 	background-color: #333;
+ 	box-shadow: 0 4px 10px rgb(0 0 0 / 0.5);
+ 	user-select: none;
++	/* 讓手指拖曳時是在塗格子，而不是捲動頁面 */
++	touch-action: none;
+ }
+ 
+ .cell {
+diff --git a/frontend/src/features/block_blast_solver/api.js b/frontend/src/features/block_blast_solver/api.js
+index 10c46dd..729559d 100644
+--- a/frontend/src/features/block_blast_solver/api.js
++++ b/frontend/src/features/block_blast_solver/api.js
+@@ -1,16 +1,17 @@
+-import { apiClient } from '../../utils/apiClient';
++import { apiClient } from "../../utils/apiClient";
+ 
+-export const getBlocks = () => apiClient.get(`api/blast/blocks`);
++// 求解與辨識比一般請求慢，放寬逾時時間
++const SLOW_REQUEST_TIMEOUT_MS = 30000;
++
++export const getBlocks = () => apiClient.get("/api/blast/blocks");
+ 
+ export const solveBlockBlast = (payload) =>
+-	apiClient.post(`api/blast/solve`, payload);
++	apiClient.post("/api/blast/solve", payload, { timeout: SLOW_REQUEST_TIMEOUT_MS });
+ 
+ export const recognizeScreenshot = (file) => {
+ 	const formData = new FormData();
+ 	formData.append("file", file);
+-	return apiClient.post(`/api/blast/recognize`, formData, {
+-		headers: {
+-			"Content-Type": "multipart/form-data",
+-		},
++	return apiClient.post("/api/blast/recognize", formData, {
++		timeout: SLOW_REQUEST_TIMEOUT_MS,
+ 	});
+ };
+diff --git a/frontend/src/features/block_blast_solver/boardUtils.js b/frontend/src/features/block_blast_solver/boardUtils.js
+new file mode 100644
+index 0000000..0ba6651
+--- /dev/null
++++ b/frontend/src/features/block_blast_solver/boardUtils.js
+@@ -0,0 +1,38 @@
++export const BOARD_SIZE = 8;
++
++/** 建立 8x8 盤面，每格都是 value。 */
++export const createBoard = (value = 0) =>
++	Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(value));
++
++/** 回傳「第 r 列第 c 欄改成 value」的新盤面（不會改動原本的）。 */
++export const setCell = (board, r, c, value) =>
++	board.map((row, i) => (i === r ? row.map((v, j) => (j === c ? value : v)) : row));
++
++/**
++ * 把解答攤平成「每一格要放第幾步」的二維陣列，例如 [[], [1], [1, 2], ...]。
++ * 同一格被多個步驟經過時（消除後再放）會依序累積。
++ */
++export function buildOverlay(solution, blocks) {
++	const overlay = Array.from({ length: BOARD_SIZE }, () =>
++		Array.from({ length: BOARD_SIZE }, () => []),
++	);
++	if (!solution || solution.status !== "success" || !solution.steps) return overlay;
++
++	solution.steps.forEach((step, stepIndex) => {
++		if (step.position === "GAME OVER") return;
++		const block = blocks.find((b) => b.id === step.block_id);
++		if (!block) return;
++
++		const { row, col } = step.position;
++		block.matrix.forEach((cells, i) => {
++			cells.forEach((filled, j) => {
++				const r = row + i;
++				const c = col + j;
++				if (filled === 1 && r < BOARD_SIZE && c < BOARD_SIZE) {
++					overlay[r][c] = [...overlay[r][c], stepIndex + 1];
++				}
++			});
++		});
++	});
++	return overlay;
++}
+diff --git a/frontend/src/features/block_blast_solver/boardUtils.test.js b/frontend/src/features/block_blast_solver/boardUtils.test.js
+new file mode 100644
+index 0000000..6c1a891
+--- /dev/null
++++ b/frontend/src/features/block_blast_solver/boardUtils.test.js
+@@ -0,0 +1,61 @@
++import { describe, expect, it } from "vitest";
++
++import { BOARD_SIZE, buildOverlay, createBoard, setCell } from "./boardUtils";
++
++describe("createBoard / setCell", () => {
++	it("creates an 8x8 board of independent rows", () => {
++		const board = createBoard(1);
++		expect(board).toHaveLength(BOARD_SIZE);
++		expect(board.every((row) => row.length === BOARD_SIZE && row.every((v) => v === 1))).toBe(true);
++		expect(board[0]).not.toBe(board[1]);
++	});
++
++	it("setCell returns a new board and leaves the original untouched", () => {
++		const board = createBoard(0);
++		const next = setCell(board, 2, 3, 1);
++		expect(next[2][3]).toBe(1);
++		expect(board[2][3]).toBe(0);
++		expect(next[0]).toBe(board[0]); // 沒動到的列直接共用，React 比較時更省
++	});
++});
++
++describe("buildOverlay", () => {
++	const blocks = [
++		{ id: 1, matrix: [[1]] },
++		{ id: 4, matrix: [[1, 1]] },
++	];
++
++	it("is empty without a successful solution", () => {
++		const overlay = buildOverlay(null, blocks);
++		expect(overlay.flat().every((cell) => cell.length === 0)).toBe(true);
++		expect(buildOverlay({ status: "fail" }, blocks).flat().flat()).toEqual([]);
++	});
++
++	it("marks each cell with the step numbers that cover it", () => {
++		const solution = {
++			status: "success",
++			steps: [
++				{ block_id: 4, position: { row: 0, col: 0 } },
++				{ block_id: 1, position: { row: 0, col: 1 } },
++			],
++		};
++		const overlay = buildOverlay(solution, blocks);
++		expect(overlay[0][0]).toEqual([1]);
++		expect(overlay[0][1]).toEqual([1, 2]);
++		expect(overlay[0][2]).toEqual([]);
++	});
++
++	it("ignores GAME OVER steps, unknown blocks and cells outside the board", () => {
++		const solution = {
++			status: "success",
++			steps: [
++				{ block_id: 1, position: "GAME OVER" },
++				{ block_id: 999, position: { row: 0, col: 0 } },
++				{ block_id: 4, position: { row: 7, col: 7 } },
++			],
++		};
++		const overlay = buildOverlay(solution, blocks);
++		expect(overlay[7][7]).toEqual([3]);
++		expect(overlay.flat().filter((cell) => cell.length > 0)).toHaveLength(1);
++	});
++});
+diff --git a/frontend/src/features/block_blast_solver/useBlockBlast.js b/frontend/src/features/block_blast_solver/useBlockBlast.js
+index ed68145..5716007 100644
+--- a/frontend/src/features/block_blast_solver/useBlockBlast.js
++++ b/frontend/src/features/block_blast_solver/useBlockBlast.js
+@@ -1,254 +1,129 @@
+-import {
+-    useCallback,
+-    useEffect,
+-    useMemo,
+-    useState,
+-} from 'react';
++import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+ 
+-import { triggerHaptic } from '../../utils/haptics';
+-import {
+-    getBlocks,
+-    recognizeScreenshot,
+-    solveBlockBlast,
+-} from './api';
++import { useToast } from "../../hooks/useToast";
++import { triggerHaptic } from "../../utils/haptics";
++import { getBlocks, recognizeScreenshot, solveBlockBlast } from "./api";
++import { buildOverlay, createBoard, setCell } from "./boardUtils";
+ 
+-const emptyBoard = Array(8)
+-	.fill()
+-	.map(() => Array(8).fill(0));
++const SLOT_COUNT = 3;
+ 
+-const emptyCustomBlock = () =>
+-	Array(5)
+-		.fill()
+-		.map(() => Array(5).fill(0));
++/** 從螢幕座標找出底下是哪一格（觸控拖曳時事件目標不會跟著手指走，所以要自己找）。 */
++function cellFromPoint(x, y) {
++	const element = document.elementFromPoint(x, y)?.closest("[data-row]");
++	if (!element) return null;
++	return { row: Number(element.dataset.row), col: Number(element.dataset.col) };
++}
+ 
+ export function useBlockBlast() {
+-	const [board, setBoard] = useState(emptyBoard);
+-	const [availableBlocks, setAvailableBlocks] = useState([]);
++	const { toast, notify, dismiss: dismissToast } = useToast();
+ 
+-	const [selectedBlocks, setSelectedBlocks] = useState([1, 1, 1]);
++	const [board, setBoard] = useState(() => createBoard(0));
++	const [availableBlocks, setAvailableBlocks] = useState([]);
++	const [selectedBlocks, setSelectedBlocks] = useState(() => Array(SLOT_COUNT).fill(1));
+ 	const [activeSlot, setActiveSlot] = useState(null);
+ 	const [solution, setSolution] = useState(null);
+ 	const [loading, setLoading] = useState(false);
+ 
+-	const [isDragging, setIsDragging] = useState(false);
+-	const [dragAction, setDragAction] = useState(null);
+-
+-	const [isCustomizing, setIsCustomizing] = useState(false);
+-	const [customBlock, setCustomBlock] = useState(emptyCustomBlock());
+-
+-	const toggleCustomCell = useCallback((r, c) => {
+-		setCustomBlock((prev) => {
+-			const newBlock = prev.map((row) => [...row]);
+-			newBlock[r][c] = newBlock[r][c] === 0 ? 1 : 0;
+-			return newBlock;
+-		});
+-	}, []);
+-
+-	const saveCustomBlock = useCallback(() => {
+-		let minR = 5,
+-			maxR = -1,
+-			minC = 5,
+-			maxC = -1;
+-		customBlock.forEach((row, r) => {
+-			row.forEach((val, c) => {
+-				if (val === 1) {
+-					if (r < minR) minR = r;
+-					if (r > maxR) maxR = r;
+-					if (c < minC) minC = c;
+-					if (c > maxC) maxC = c;
+-				}
+-			});
+-		});
+-
+-		if (minR > maxR) {
+-			alert("請至少畫一格方塊喔！");
+-			triggerHaptic.warning(); // 💡 加上警告震動
+-			return;
+-		}
+-
+-		const trimmedMatrix = [];
+-		for (let r = minR; r <= maxR; r++) {
+-			const row = [];
+-			for (let c = minC; c <= maxC; c++) {
+-				row.push(customBlock[r][c]);
+-			}
+-			trimmedMatrix.push(row);
+-		}
++	// 目前拖曳要塗成 0 還是 1；null 代表沒有在拖曳。只在事件處理器讀寫，所以用 ref。
++	const paintValue = useRef(null);
+ 
+-		const newBlock = {
+-			id: `custom_${Date.now()}`,
+-			matrix: trimmedMatrix,
+-		};
+-
+-		setAvailableBlocks((prev) => [newBlock, ...prev]);
+-		setIsCustomizing(false);
+-		setCustomBlock(emptyCustomBlock());
+-		triggerHaptic.medium(); // 💡 加上儲存成功的震動
+-	}, [customBlock]);
+-	// 💡 自訂方塊邏輯結束
+-
+-	const handleImageUpload = async (event) => {
+-		const file = event.target.files[0];
+-		if (!file) return;
+-
+-		setLoading(true);
+-		try {
+-			const data = await recognizeScreenshot(file);
+-			if (data && data.board) {
+-				setBoard(data.board);
+-				triggerHaptic.success();
+-				alert("✅ 截圖辨識成功！盤面已自動更新。");
+-			}
+-		} catch (err) {
+-			const errorMsg =
+-				err.response?.data?.detail || err.message || "辨識失敗";
+-			alert(
+-				`辨識失敗: ${errorMsg}\n請確保截圖清晰且包含完整的 8x8 遊戲網格。`,
+-			);
+-		} finally {
+-			setLoading(false);
+-			// 清空 input 讓下次可以重複上傳同一張圖
+-			event.target.value = null;
+-		}
+-	};
+-
+-	// 取得方塊清單 (加入 isMounted 防護機制)
+ 	useEffect(() => {
+-		let isMounted = true;
+-		const fetchBlocks = async () => {
++		let active = true;
++		const load = async () => {
+ 			try {
+ 				const data = await getBlocks();
+-				if (isMounted) setAvailableBlocks(data);
++				if (active) setAvailableBlocks(data);
+ 			} catch (err) {
+-				console.error("獲取方塊失敗", err);
++				if (active) notify(err.message || "無法取得方塊清單", "error");
+ 			}
+ 		};
+-		fetchBlocks();
++		load();
+ 		return () => {
+-			isMounted = false;
++			active = false;
+ 		};
+-	}, []);
++	}, [notify]);
+ 
+-	// 監聽全域滑鼠放開，停止拖曳畫筆
++	// 手指或滑鼠在視窗任何地方放開，都要結束拖曳
+ 	useEffect(() => {
+-		const handleGlobalMouseUp = () => {
+-			setIsDragging(false);
+-			setDragAction(null);
++		const stop = () => {
++			paintValue.current = null;
++		};
++		window.addEventListener("pointerup", stop);
++		window.addEventListener("pointercancel", stop);
++		return () => {
++			window.removeEventListener("pointerup", stop);
++			window.removeEventListener("pointercancel", stop);
+ 		};
+-		window.addEventListener("mouseup", handleGlobalMouseUp);
+-		return () => window.removeEventListener("mouseup", handleGlobalMouseUp);
+ 	}, []);
+ 
+-	const updateCell = useCallback((r, c, newValue) => {
+-		setBoard((prev) => {
+-			const newBoard = prev.map((row) => [...row]);
+-			newBoard[r][c] = newValue;
+-			return newBoard;
+-		});
++	const paintCell = useCallback((row, col, value) => {
++		setBoard((prev) => (prev[row][col] === value ? prev : setCell(prev, row, col, value)));
+ 		setSolution(null);
+ 	}, []);
+ 
+-	const handleMouseDown = useCallback(
+-		(r, c) => {
+-			const targetValue = board[r][c] === 0 ? 1 : 0;
+-			setIsDragging(true);
+-			setDragAction(targetValue);
+-			updateCell(r, c, targetValue);
+-		},
+-		[board, updateCell],
+-	);
++	const handleBoardPointerDown = (event) => {
++		const cell = cellFromPoint(event.clientX, event.clientY);
++		if (!cell) return;
++		paintValue.current = board[cell.row][cell.col] === 0 ? 1 : 0;
++		paintCell(cell.row, cell.col, paintValue.current);
++	};
+ 
+-	const handleMouseEnter = useCallback(
+-		(r, c) => {
+-			if (isDragging && dragAction !== null) {
+-				if (board[r][c] !== dragAction) {
+-					updateCell(r, c, dragAction);
+-				}
+-			}
+-		},
+-		[board, isDragging, dragAction, updateCell],
+-	);
++	const handleBoardPointerMove = (event) => {
++		if (paintValue.current === null) return;
++		const cell = cellFromPoint(event.clientX, event.clientY);
++		if (cell) paintCell(cell.row, cell.col, paintValue.current);
++	};
+ 
+-	const handlePickBlock = useCallback(
+-		(blockId) => {
+-			if (activeSlot === null) return;
+-			const newSelected = [...selectedBlocks];
+-			newSelected[activeSlot] = blockId;
+-			setSelectedBlocks(newSelected);
+-			setActiveSlot(activeSlot < 2 ? activeSlot + 1 : null);
+-		},
+-		[activeSlot, selectedBlocks],
+-	);
++	const handlePickBlock = (blockId) => {
++		if (activeSlot === null) return;
++		setSelectedBlocks((prev) => prev.map((id, i) => (i === activeSlot ? blockId : id)));
++		setActiveSlot(activeSlot < SLOT_COUNT - 1 ? activeSlot + 1 : null);
++	};
+ 
+ 	const handleSolve = async () => {
+ 		setLoading(true);
+ 		setActiveSlot(null);
+ 		try {
+-			const data = await solveBlockBlast({
+-				board: board,
+-				block_ids: selectedBlocks,
+-			});
+-			setSolution(data);
++			setSolution(await solveBlockBlast({ board, block_ids: selectedBlocks }));
+ 		} catch (err) {
+-			const errorMsg =
+-				err.response?.data?.detail || err.message || "伺服器發生錯誤";
+-			alert(`計算失敗，請檢查網路。錯誤: ${errorMsg}`);
++			notify(`計算失敗：${err.message}`, "error");
+ 		} finally {
+ 			setLoading(false);
+ 		}
+ 	};
+ 
+-	const clearBoard = useCallback(() => {
+-		setBoard(
+-			Array(8)
+-				.fill()
+-				.map(() => Array(8).fill(0)),
+-		);
+-		triggerHaptic.light();
+-		setSolution(null);
+-	}, []);
++	const handleImageUpload = async (event) => {
++		const input = event.target;
++		const file = input.files[0];
++		if (!file) return;
+ 
+-	const fillBoard = useCallback(() => {
+-		setBoard(
+-			Array(8)
+-				.fill()
+-				.map(() => Array(8).fill(1)),
+-		);
++		setLoading(true);
++		try {
++			const data = await recognizeScreenshot(file);
++			if (data?.board) {
++				setBoard(data.board);
++				setSolution(null);
++				triggerHaptic.success();
++				notify("截圖辨識成功，盤面已自動更新");
++			}
++		} catch (err) {
++			notify(`辨識失敗：${err.message}。請確認截圖清晰且包含完整的 8x8 網格。`, "error");
++		} finally {
++			setLoading(false);
++			input.value = ""; // 讓下次可以重複上傳同一張圖
++		}
++	};
++
++	const resetBoard = (value) => {
++		setBoard(createBoard(value));
+ 		setSolution(null);
+ 		triggerHaptic.light();
+-	}, []);
+-
+-	// 將複雜的「解答覆蓋層計算」包裝進 useMemo，避免畫面無謂的重複計算
+-	const overlay = useMemo(() => {
+-		const tempOverlay = Array(8)
+-			.fill()
+-			.map(() => Array(8).fill([]));
+-		if (!solution || solution.status !== "success" || !solution.steps)
+-			return tempOverlay;
+-
+-		solution.steps.forEach((step, stepIndex) => {
+-			if (step.position === "GAME OVER") return;
+-			const block = availableBlocks.find((b) => b.id === step.block_id);
+-			if (!block) return;
++	};
+ 
+-			const { row, col } = step.position;
+-			block.matrix.forEach((rArr, i) => {
+-				rArr.forEach((val, j) => {
+-					if (val === 1) {
+-						const boardRow = row + i;
+-						const boardCol = col + j;
+-						if (boardRow < 8 && boardCol < 8) {
+-							tempOverlay[boardRow][boardCol] = [
+-								...tempOverlay[boardRow][boardCol],
+-								stepIndex + 1,
+-							];
+-						}
+-					}
+-				});
+-			});
+-		});
+-		return tempOverlay;
+-	}, [solution, availableBlocks]);
++	const overlay = useMemo(
++		() => buildOverlay(solution, availableBlocks),
++		[solution, availableBlocks],
++	);
+ 
+ 	return {
+ 		board,
+@@ -258,18 +133,15 @@ export function useBlockBlast() {
+ 		solution,
+ 		loading,
+ 		overlay,
++		toast,
++		dismissToast,
+ 		setActiveSlot,
+-		handleMouseDown,
+-		handleMouseEnter,
++		handleBoardPointerDown,
++		handleBoardPointerMove,
+ 		handlePickBlock,
+ 		handleSolve,
+-		clearBoard,
+-		fillBoard,
+ 		handleImageUpload,
+-		isCustomizing,
+-		customBlock,
+-		setIsCustomizing,
+-		toggleCustomCell,
+-		saveCustomBlock,
++		clearBoard: () => resetBoard(0),
++		fillBoard: () => resetBoard(1),
+ 	};
+ }
+diff --git a/frontend/src/features/dept_simplification/DeptApp.jsx b/frontend/src/features/dept_simplification/DeptApp.jsx
+index 4e89d98..87a7771 100644
+--- a/frontend/src/features/dept_simplification/DeptApp.jsx
++++ b/frontend/src/features/dept_simplification/DeptApp.jsx
+@@ -9,11 +9,15 @@ import ExpensePanel from "./components/ExpensePanel";
+ import HistoryPanel from "./components/HistoryPanel";
+ import MemberPanel from "./components/MemberPanel";
+ import SettlementPanel from "./components/SettlementPanel";
+-import Toast from "./components/Toast";
++import TripBar from "./components/TripBar";
++import Toast from "../../components/Toast/Toast";
+ import { useDept } from "./useDept";
+ 
+ export default function DeptApp() {
+ 	const {
++		trips,
++		activeTrip,
++		selectTrip,
+ 		overview,
+ 		persons,
+ 		loading,
+@@ -44,50 +48,60 @@ export default function DeptApp() {
+ 						</p>
+ 					</div>
+ 					<button type="button" className={styles.refresh} onClick={actions.refresh}>
+-						<RefreshCw
+-							className={cx(loading || busy ? styles.spin : "")}
+-							aria-hidden="true"
+-						/>
++						<RefreshCw className={cx(loading || busy ? styles.spin : "")} aria-hidden="true" />
+ 						重新整理
+ 					</button>
+ 				</header>
+ 
+-				<BalanceBoard
+-					balances={sortedBalances}
+-					memberCount={persons.length}
+-					loading={loading}
++				<TripBar
++					trips={trips}
++					activeTripId={activeTrip?.id ?? null}
++					busy={busy}
++					onSelect={selectTrip}
++					onCreate={actions.addTrip}
+ 				/>
+ 
+-				<div className={styles.layout}>
+-					<div className={styles.column}>
+-						<MemberPanel
+-							persons={persons}
+-							busy={busy}
+-							onAdd={actions.addPerson}
+-							onRemove={actions.removePerson}
+-						/>
+-						<ExpensePanel
+-							persons={persons}
+-							busy={busy}
+-							onAddExpense={actions.addExpense}
++				{activeTrip && (
++					<>
++						<BalanceBoard
++							balances={sortedBalances}
++							memberCount={persons.length}
++							loading={loading}
+ 						/>
+-					</div>
+ 
+-					<div className={styles.column}>
+-						<SettlementPanel
+-							overview={overview}
+-							savedCount={savedCount}
+-							settledEveryone={settledEveryone}
+-							onNotify={notify}
+-						/>
+-						<HistoryPanel
+-							expenses={overview.expenses}
+-							persons={persons}
+-							onDelete={actions.removeExpense}
+-						/>
+-						<DangerPanel busy={busy} onReset={actions.resetAll} />
+-					</div>
+-				</div>
++						<div className={styles.layout}>
++							<div className={styles.column}>
++								<MemberPanel
++									persons={persons}
++									busy={busy}
++									onAdd={actions.addPerson}
++									onRemove={actions.removePerson}
++								/>
++								<ExpensePanel persons={persons} busy={busy} onAddExpense={actions.addExpense} />
++							</div>
++
++							<div className={styles.column}>
++								<SettlementPanel
++									overview={overview}
++									savedCount={savedCount}
++									settledEveryone={settledEveryone}
++									onNotify={notify}
++								/>
++								<HistoryPanel
++									expenses={overview.expenses}
++									persons={persons}
++									onDelete={actions.removeExpense}
++								/>
++								<DangerPanel
++									tripName={activeTrip.name}
++									busy={busy}
++									onReset={actions.resetTrip}
++									onDeleteTrip={actions.removeTrip}
++								/>
++							</div>
++						</div>
++					</>
++				)}
+ 			</div>
+ 
+ 			<Toast toast={toast} onClose={dismissToast} />
+diff --git a/frontend/src/features/dept_simplification/api.js b/frontend/src/features/dept_simplification/api.js
+index ee6bb3b..f616814 100644
+--- a/frontend/src/features/dept_simplification/api.js
++++ b/frontend/src/features/dept_simplification/api.js
+@@ -1,11 +1,20 @@
+ import { apiClient } from "../../utils/apiClient.js";
+ 
+ // 對應後端 main.py：app.include_router(dept_router, prefix="/api/dept")
++// 金額一律是「分」的整數。會改動資料的端點都直接回傳最新的 overview。
+ const BASE = "/api/dept";
++const trip = (tripId) => `${BASE}/trips/${tripId}`;
+ 
+-export const fetchOverview = () => apiClient.get(`${BASE}/overview/`);
+-export const createPerson = (name) => apiClient.post(`${BASE}/persons/`, { name });
+-export const deletePerson = (id) => apiClient.delete(`${BASE}/persons/${id}`);
+-export const createExpense = (payload) => apiClient.post(`${BASE}/expenses/`, payload);
+-export const deleteExpense = (id) => apiClient.delete(`${BASE}/expenses/${id}`);
+-export const resetAll = () => apiClient.delete(`${BASE}/reset/`);
++export const fetchTrips = () => apiClient.get(`${BASE}/trips/`);
++export const createTrip = (name) => apiClient.post(`${BASE}/trips/`, { name });
++export const deleteTrip = (tripId) => apiClient.delete(trip(tripId));
++
++export const fetchOverview = (tripId) => apiClient.get(`${trip(tripId)}/overview/`);
++export const createPerson = (tripId, name) => apiClient.post(`${trip(tripId)}/persons/`, { name });
++export const deletePerson = (tripId, personId) =>
++	apiClient.delete(`${trip(tripId)}/persons/${personId}`);
++export const createExpense = (tripId, payload) =>
++	apiClient.post(`${trip(tripId)}/expenses/`, payload);
++export const deleteExpense = (tripId, expenseId) =>
++	apiClient.delete(`${trip(tripId)}/expenses/${expenseId}`);
++export const resetTrip = (tripId) => apiClient.delete(`${trip(tripId)}/data/`);
+diff --git a/frontend/src/features/dept_simplification/buildExpense.js b/frontend/src/features/dept_simplification/buildExpense.js
+index 967fc50..8c0702b 100644
+--- a/frontend/src/features/dept_simplification/buildExpense.js
++++ b/frontend/src/features/dept_simplification/buildExpense.js
+@@ -1,4 +1,4 @@
+-import { evenSplitCents, fromCents, toCents } from "./money";
++import { evenSplitCents, toCents } from "./money";
+ 
+ /**
+  * 把表單輸入組成後端需要的 payload。
+@@ -13,9 +13,7 @@ function toTwdCents(amount, rate) {
+ }
+ 
+ function withForeignNote(description, amount, currency) {
+-	return currency === "TWD"
+-		? description
+-		: `${description} (原外幣: ${amount} ${currency})`;
++	return currency === "TWD" ? description : `${description} (原外幣: ${amount} ${currency})`;
+ }
+ 
+ export function buildGroupExpense({
+@@ -31,34 +29,30 @@ export function buildGroupExpense({
+ 	}
+ 	const totalCents = toTwdCents(amount, rate);
+ 	const parts = evenSplitCents(totalCents, participantIds.length);
++	if (parts.some((cents) => cents <= 0)) {
++		throw new Error("金額太小，無法分給這麼多人");
++	}
+ 
+ 	return {
+ 		description: withForeignNote(description.trim() || "群組花費", amount, currency),
+-		total_amount: fromCents(totalCents),
++		total_cents: totalCents,
+ 		payer_id: Number(payerId),
+ 		splits: participantIds.map((personId, index) => ({
+ 			person_id: personId,
+-			amount: fromCents(parts[index]),
++			amount_cents: parts[index],
+ 		})),
+ 	};
+ }
+ 
+-export function buildDirectExpense({
+-	description,
+-	amount,
+-	currency,
+-	rate,
+-	payerId,
+-	debtorId,
+-}) {
++export function buildDirectExpense({ description, amount, currency, rate, payerId, debtorId }) {
+ 	if (!amount || !payerId || !debtorId) throw new Error("請選擇雙方並填寫金額");
+ 	if (payerId === debtorId) throw new Error("出錢人與被代墊人不能相同");
+ 	const totalCents = toTwdCents(amount, rate);
+ 
+ 	return {
+ 		description: withForeignNote(description.trim() || "指定代墊", amount, currency),
+-		total_amount: fromCents(totalCents),
++		total_cents: totalCents,
+ 		payer_id: Number(payerId),
+-		splits: [{ person_id: Number(debtorId), amount: fromCents(totalCents) }],
++		splits: [{ person_id: Number(debtorId), amount_cents: totalCents }],
+ 	};
+ }
+diff --git a/frontend/src/features/dept_simplification/buildExpense.test.js b/frontend/src/features/dept_simplification/buildExpense.test.js
+new file mode 100644
+index 0000000..3371fba
+--- /dev/null
++++ b/frontend/src/features/dept_simplification/buildExpense.test.js
+@@ -0,0 +1,70 @@
++import { describe, expect, it } from "vitest";
++
++import { buildDirectExpense, buildGroupExpense } from "./buildExpense";
++
++const group = (overrides = {}) => ({
++	description: "晚餐",
++	amount: "1000",
++	currency: "TWD",
++	rate: 1,
++	payerId: "1",
++	participantIds: [1, 2, 3],
++	...overrides,
++});
++
++describe("buildGroupExpense", () => {
++	it("splits evenly in cents and keeps the total exact", () => {
++		const payload = buildGroupExpense(group());
++		expect(payload.total_cents).toBe(100000);
++		expect(payload.payer_id).toBe(1);
++		expect(payload.splits.map((s) => s.amount_cents)).toEqual([33334, 33333, 33333]);
++		expect(payload.splits.reduce((sum, s) => sum + s.amount_cents, 0)).toBe(payload.total_cents);
++	});
++
++	it("converts foreign currency and records the original amount", () => {
++		const payload = buildGroupExpense(group({ amount: "3000", currency: "JPY", rate: 0.2134 }));
++		expect(payload.total_cents).toBe(64020);
++		expect(payload.description).toBe("晚餐 (原外幣: 3000 JPY)");
++	});
++
++	it("falls back to a default description", () => {
++		expect(buildGroupExpense(group({ description: "  " })).description).toBe("群組花費");
++	});
++
++	it("rejects invalid input with a readable message", () => {
++		expect(() => buildGroupExpense(group({ amount: "" }))).toThrow("請填寫金額");
++		expect(() => buildGroupExpense(group({ participantIds: [] }))).toThrow("至少選擇一位");
++		expect(() => buildGroupExpense(group({ amount: "0" }))).toThrow("大於 0");
++		expect(() => buildGroupExpense(group({ rate: null, currency: "JPY" }))).toThrow("匯率");
++	});
++
++	it("rejects an amount too small to give everyone at least one cent", () => {
++		expect(() => buildGroupExpense(group({ amount: "0.02" }))).toThrow("金額太小");
++	});
++});
++
++describe("buildDirectExpense", () => {
++	const direct = (overrides = {}) => ({
++		description: "",
++		amount: "120",
++		currency: "TWD",
++		rate: 1,
++		payerId: "1",
++		debtorId: "2",
++		...overrides,
++	});
++
++	it("builds a single full-amount split for the debtor", () => {
++		expect(buildDirectExpense(direct())).toEqual({
++			description: "指定代墊",
++			total_cents: 12000,
++			payer_id: 1,
++			splits: [{ person_id: 2, amount_cents: 12000 }],
++		});
++	});
++
++	it("rejects missing or identical people", () => {
++		expect(() => buildDirectExpense(direct({ debtorId: "" }))).toThrow("請選擇雙方");
++		expect(() => buildDirectExpense(direct({ debtorId: "1" }))).toThrow("不能相同");
++	});
++});
+diff --git a/frontend/src/features/dept_simplification/components/BalanceBoard.jsx b/frontend/src/features/dept_simplification/components/BalanceBoard.jsx
+index a8d3dd6..86f1b5a 100644
+--- a/frontend/src/features/dept_simplification/components/BalanceBoard.jsx
++++ b/frontend/src/features/dept_simplification/components/BalanceBoard.jsx
+@@ -1,12 +1,10 @@
+-import { formatMoney } from "../money";
++import { formatCents } from "../money";
+ import Avatar from "./Avatar";
+ import styles from "./BalanceBoard.module.css";
+ 
+-const BALANCE_EPSILON = 0.005;
+-
+-function describeBalance(amount) {
+-	if (amount > BALANCE_EPSILON) return { tone: "positive", text: `應收 ${formatMoney(amount)}` };
+-	if (amount < -BALANCE_EPSILON) return { tone: "negative", text: `應付 ${formatMoney(-amount)}` };
++function describeBalance(cents) {
++	if (cents > 0) return { tone: "positive", text: `應收 ${formatCents(cents)}` };
++	if (cents < 0) return { tone: "negative", text: `應付 ${formatCents(-cents)}` };
+ 	return { tone: "neutral", text: "已結清" };
+ }
+ 
+@@ -24,7 +22,7 @@ export default function BalanceBoard({ balances, memberCount, loading }) {
+ 	return (
+ 		<ul className={styles.board}>
+ 			{balances.map((b) => {
+-				const { tone, text } = describeBalance(b.amount);
++				const { tone, text } = describeBalance(b.amount_cents);
+ 				return (
+ 					<li key={b.person_id} className={styles.card}>
+ 						<Avatar name={b.name} />
+diff --git a/frontend/src/features/dept_simplification/components/DangerPanel.jsx b/frontend/src/features/dept_simplification/components/DangerPanel.jsx
+index 2bc0856..c4a9a55 100644
+--- a/frontend/src/features/dept_simplification/components/DangerPanel.jsx
++++ b/frontend/src/features/dept_simplification/components/DangerPanel.jsx
+@@ -4,28 +4,36 @@ import { cx } from "../../../utils/cx";
+ import ui from "../ui.module.css";
+ import styles from "./DangerPanel.module.css";
+ 
+-export default function DangerPanel({ busy, onReset }) {
+-	const handleClick = () => {
+-		if (window.confirm("確定要刪除所有人員與帳務資料嗎？此動作無法復原。")) onReset();
++export default function DangerPanel({ tripName, busy, onReset, onDeleteTrip }) {
++	const confirmThen = (message, action) => () => {
++		if (window.confirm(message)) action();
+ 	};
+ 
+ 	return (
+ 		<section className={styles.panel}>
+ 			<div className={styles.header}>
+ 				<AlertTriangle aria-hidden="true" />
+-				<h2 className={ui.panelTitle}>重置這一輪</h2>
++				<h2 className={ui.panelTitle}>危險區域</h2>
++			</div>
++			<p className={styles.description}>以下操作只影響「{tripName}」，無法復原。</p>
++			<div className={styles.actions}>
++				<button
++					type="button"
++					className={cx(ui.button, ui.buttonRose)}
++					disabled={busy}
++					onClick={confirmThen("確定要清空這個旅程的所有成員與帳務嗎？旅程本身會保留。", onReset)}
++				>
++					清空成員與帳務
++				</button>
++				<button
++					type="button"
++					className={cx(ui.button, ui.buttonRose)}
++					disabled={busy}
++					onClick={confirmThen(`確定要刪除整個旅程「${tripName}」嗎？`, onDeleteTrip)}
++				>
++					刪除這個旅程
++				</button>
+ 			</div>
+-			<p className={styles.description}>
+-				結清後若要開始新一輪，會刪除全部成員與帳務，無法復原。
+-			</p>
+-			<button
+-				type="button"
+-				className={cx(ui.button, ui.buttonRose)}
+-				disabled={busy}
+-				onClick={handleClick}
+-			>
+-				清空所有資料
+-			</button>
+ 		</section>
+ 	);
+ }
+diff --git a/frontend/src/features/dept_simplification/components/DangerPanel.module.css b/frontend/src/features/dept_simplification/components/DangerPanel.module.css
+index d041122..18a136c 100644
+--- a/frontend/src/features/dept_simplification/components/DangerPanel.module.css
++++ b/frontend/src/features/dept_simplification/components/DangerPanel.module.css
+@@ -30,3 +30,9 @@
+ 	line-height: 1.5rem;
+ 	color: var(--rose-700);
+ }
++
++.actions {
++	display: flex;
++	flex-wrap: wrap;
++	gap: 0.5rem;
++}
+diff --git a/frontend/src/features/dept_simplification/components/ExpensePanel.jsx b/frontend/src/features/dept_simplification/components/ExpensePanel.jsx
+index 72ec11b..bb854b0 100644
+--- a/frontend/src/features/dept_simplification/components/ExpensePanel.jsx
++++ b/frontend/src/features/dept_simplification/components/ExpensePanel.jsx
+@@ -249,18 +249,14 @@ export default function ExpensePanel({ persons, busy, onAddExpense }) {
+ 					persons={persons}
+ 					busy={busy}
+ 					fx={fx}
+-					onSubmit={(values) =>
+-						onAddExpense(() => buildGroupExpense(values), "已記錄群組花費")
+-					}
++					onSubmit={(values) => onAddExpense(() => buildGroupExpense(values), "已記錄群組花費")}
+ 				/>
+ 			) : (
+ 				<DirectForm
+ 					persons={persons}
+ 					busy={busy}
+ 					fx={fx}
+-					onSubmit={(values) =>
+-						onAddExpense(() => buildDirectExpense(values), "已記錄代墊")
+-					}
++					onSubmit={(values) => onAddExpense(() => buildDirectExpense(values), "已記錄代墊")}
+ 				/>
+ 			)}
+ 		</section>
+diff --git a/frontend/src/features/dept_simplification/components/HistoryPanel.jsx b/frontend/src/features/dept_simplification/components/HistoryPanel.jsx
+index 1aa3249..10fb85e 100644
+--- a/frontend/src/features/dept_simplification/components/HistoryPanel.jsx
++++ b/frontend/src/features/dept_simplification/components/HistoryPanel.jsx
+@@ -8,16 +8,13 @@ import {
+ 	TrailingActions,
+ } from "react-swipeable-list";
+ 
+-import { formatMoney } from "../money";
++import { formatCents } from "../money";
+ import ui from "../ui.module.css";
+ import styles from "./HistoryPanel.module.css";
+ 
+-const AMOUNT_EPSILON = 0.005;
+-
+ function ExpenseItem({ expense, nameOf, onDelete }) {
+ 	const isDirect =
+-		expense.splits.length === 1 &&
+-		Math.abs(expense.splits[0].amount - expense.total_amount) < AMOUNT_EPSILON;
++		expense.splits.length === 1 && expense.splits[0].amount_cents === expense.total_cents;
+ 	const payer = nameOf(expense.payer_id);
+ 
+ 	const trailingActions = (
+@@ -40,8 +37,8 @@ function ExpenseItem({ expense, nameOf, onDelete }) {
+ 							<p className={styles.description}>{expense.description}</p>
+ 							<p className={styles.detail}>
+ 								{isDirect
+-									? `${payer} 幫 ${nameOf(expense.splits[0].person_id)} 代墊 ${formatMoney(expense.total_amount)}`
+-									: `總額 ${formatMoney(expense.total_amount)}，由 ${payer} 先付`}
++									? `${payer} 幫 ${nameOf(expense.splits[0].person_id)} 代墊 ${formatCents(expense.total_cents)}`
++									: `總額 ${formatCents(expense.total_cents)}，由 ${payer} 先付`}
+ 							</p>
+ 						</div>
+ 						{/* 滑鼠使用者看不到滑動提示，所以在精準指標裝置上多給一顆按鈕 */}
+@@ -61,12 +58,8 @@ function ExpenseItem({ expense, nameOf, onDelete }) {
+ 							{expense.splits.map((s) => {
+ 								const isPayer = s.person_id === expense.payer_id;
+ 								return (
+-									<span
+-										key={s.id}
+-										className={styles.tag}
+-										data-role={isPayer ? "payer" : "debtor"}
+-									>
+-										{nameOf(s.person_id)} {isPayer ? "自付" : "欠"} {formatMoney(s.amount)}
++									<span key={s.id} className={styles.tag} data-role={isPayer ? "payer" : "debtor"}>
++										{nameOf(s.person_id)} {isPayer ? "自付" : "欠"} {formatCents(s.amount_cents)}
+ 									</span>
+ 								);
+ 							})}
+diff --git a/frontend/src/features/dept_simplification/components/MemberPanel.jsx b/frontend/src/features/dept_simplification/components/MemberPanel.jsx
+index 87798d5..74241fe 100644
+--- a/frontend/src/features/dept_simplification/components/MemberPanel.jsx
++++ b/frontend/src/features/dept_simplification/components/MemberPanel.jsx
+@@ -32,11 +32,7 @@ export default function MemberPanel({ persons, busy, onAdd, onRemove }) {
+ 					value={name}
+ 					onChange={(e) => setName(e.target.value)}
+ 				/>
+-				<button
+-					type="submit"
+-					className={cx(ui.button, ui.buttonDark)}
+-					disabled={busy || !trimmed}
+-				>
++				<button type="submit" className={cx(ui.button, ui.buttonDark)} disabled={busy || !trimmed}>
+ 					<Plus aria-hidden="true" />
+ 					新增
+ 				</button>
+diff --git a/frontend/src/features/dept_simplification/components/SettlementPanel.jsx b/frontend/src/features/dept_simplification/components/SettlementPanel.jsx
+index eade859..8ad23a5 100644
+--- a/frontend/src/features/dept_simplification/components/SettlementPanel.jsx
++++ b/frontend/src/features/dept_simplification/components/SettlementPanel.jsx
+@@ -1,7 +1,8 @@
+ import { ArrowRight, Check, Copy, ImageDown } from "lucide-react";
+ import { useRef, useState } from "react";
+ 
+-import { formatMoney } from "../money";
++import { saveImage } from "../../../utils/saveImage";
++import { formatCents } from "../money";
+ import styles from "./SettlementPanel.module.css";
+ import ui from "../ui.module.css";
+ 
+@@ -18,7 +19,7 @@ export default function SettlementPanel({ overview, savedCount, settledEveryone,
+ 
+ 	const copyText = async () => {
+ 		const text = settlements
+-			.map((s) => `${s.from_person} → ${s.to_person} ${formatMoney(s.amount)}`)
++			.map((s) => `${s.from_person} → ${s.to_person} ${formatCents(s.amount_cents)}`)
+ 			.join("\n");
+ 		try {
+ 			await navigator.clipboard.writeText(text);
+@@ -40,10 +41,9 @@ export default function SettlementPanel({ overview, savedCount, settledEveryone,
+ 				backgroundColor: getComputedStyle(element).backgroundColor,
+ 				scale: 3,
+ 			});
+-			const link = document.createElement("a");
+-			link.download = `分帳結算_${new Date().toISOString().slice(0, 10)}.png`;
+-			link.href = canvas.toDataURL("image/png");
+-			link.click();
++			const filename = `分帳結算_${new Date().toISOString().slice(0, 10)}.png`;
++			const result = await saveImage(canvas, filename);
++			if (result === "downloaded") onNotify("已下載請款圖卡");
+ 		} catch (err) {
+ 			onNotify(`圖卡生成失敗：${err.message ?? err}`, "error");
+ 		}
+@@ -72,9 +72,7 @@ export default function SettlementPanel({ overview, savedCount, settledEveryone,
+ 				)}
+ 			</div>
+ 
+-			{savedCount > 0 && (
+-				<p className={styles.saved}>少轉 {savedCount} 次，大家對一次就能結清。</p>
+-			)}
++			{savedCount > 0 && <p className={styles.saved}>少轉 {savedCount} 次，大家對一次就能結清。</p>}
+ 
+ 			{settlements.length === 0 ? (
+ 				<p className={styles.empty}>目前沒有需要轉帳的債務。</p>
+@@ -89,7 +87,7 @@ export default function SettlementPanel({ overview, savedCount, settledEveryone,
+ 									<ArrowRight className={styles.arrow} aria-label="轉給" />
+ 									<span className={styles.person}>{s.to_person}</span>
+ 								</div>
+-								<span className={styles.amount}>{formatMoney(s.amount)}</span>
++								<span className={styles.amount}>{formatCents(s.amount_cents)}</span>
+ 							</li>
+ 						))}
+ 					</ul>
+diff --git a/frontend/src/features/dept_simplification/components/TripBar.jsx b/frontend/src/features/dept_simplification/components/TripBar.jsx
+new file mode 100644
+index 0000000..1aba04e
+--- /dev/null
++++ b/frontend/src/features/dept_simplification/components/TripBar.jsx
+@@ -0,0 +1,83 @@
++import { Plus, Plane } from "lucide-react";
++import { useState } from "react";
++
++import { cx } from "../../../utils/cx";
++import ui from "../ui.module.css";
++import styles from "./TripBar.module.css";
++
++export default function TripBar({ trips, activeTripId, busy, onSelect, onCreate }) {
++	const [creating, setCreating] = useState(false);
++	const [name, setName] = useState("");
++	const trimmed = name.trim();
++	// 還沒有任何旅程時一定要先建立一個，所以直接展開輸入框
++	const showForm = creating || trips.length === 0;
++
++	const handleSubmit = async (e) => {
++		e.preventDefault();
++		if (!trimmed) return;
++		if (await onCreate(trimmed)) {
++			setName("");
++			setCreating(false);
++		}
++	};
++
++	return (
++		<div className={styles.bar}>
++			<Plane className={styles.icon} aria-hidden="true" />
++
++			{trips.length > 0 && (
++				<label className={styles.selectLabel}>
++					<span className={styles.srOnly}>目前旅程</span>
++					<select
++						className={cx(ui.select, styles.select)}
++						value={activeTripId ?? ""}
++						disabled={busy}
++						onChange={(e) => onSelect(Number(e.target.value))}
++					>
++						{trips.map((t) => (
++							<option key={t.id} value={t.id}>
++								{t.name}
++							</option>
++						))}
++					</select>
++				</label>
++			)}
++
++			{showForm ? (
++				<form className={styles.form} onSubmit={handleSubmit}>
++					<input
++						type="text"
++						className={ui.input}
++						placeholder={trips.length === 0 ? "建立第一個旅程，例如：日本五日遊" : "新旅程名稱"}
++						aria-label="新旅程名稱"
++						maxLength={60}
++						value={name}
++						onChange={(e) => setName(e.target.value)}
++					/>
++					<button
++						type="submit"
++						className={cx(ui.button, ui.buttonGreen)}
++						disabled={busy || !trimmed}
++					>
++						建立
++					</button>
++					{trips.length > 0 && (
++						<button type="button" className={ui.linkButton} onClick={() => setCreating(false)}>
++							取消
++						</button>
++					)}
++				</form>
++			) : (
++				<button
++					type="button"
++					className={cx(ui.button, ui.buttonDark)}
++					disabled={busy}
++					onClick={() => setCreating(true)}
++				>
++					<Plus aria-hidden="true" />
++					新旅程
++				</button>
++			)}
++		</div>
++	);
++}
+diff --git a/frontend/src/features/dept_simplification/components/TripBar.module.css b/frontend/src/features/dept_simplification/components/TripBar.module.css
+new file mode 100644
+index 0000000..fa8b858
+--- /dev/null
++++ b/frontend/src/features/dept_simplification/components/TripBar.module.css
+@@ -0,0 +1,44 @@
++.bar {
++	display: flex;
++	flex-wrap: wrap;
++	align-items: center;
++	gap: 0.75rem;
++	margin-bottom: 1.5rem;
++	padding: 0.75rem 1rem;
++	border: 1px solid #fff;
++	border-radius: var(--radius-lg);
++	background-color: rgb(255 255 255 / 0.9);
++	box-shadow: var(--shadow-card);
++}
++
++.icon {
++	flex-shrink: 0;
++	width: 1.25rem;
++	height: 1.25rem;
++	color: var(--emerald-600);
++}
++
++.selectLabel {
++	flex: 1 1 12rem;
++	max-width: 20rem;
++}
++
++.select {
++	font-weight: 600;
++}
++
++.form {
++	display: flex;
++	flex: 1 1 18rem;
++	align-items: center;
++	gap: 0.5rem;
++}
++
++.srOnly {
++	position: absolute;
++	width: 1px;
++	height: 1px;
++	overflow: hidden;
++	clip-path: inset(50%);
++	white-space: nowrap;
++}
+diff --git a/frontend/src/features/dept_simplification/money.js b/frontend/src/features/dept_simplification/money.js
+index 0a275a2..2a3f752 100644
+--- a/frontend/src/features/dept_simplification/money.js
++++ b/frontend/src/features/dept_simplification/money.js
+@@ -22,10 +22,10 @@ const twdFormatter = new Intl.NumberFormat("en-US", {
+ 	minimumFractionDigits: 2,
+ });
+ 
+-export function formatMoney(amount) {
+-	const n = Number(amount);
+-	if (!Number.isFinite(n)) return twdFormatter.format(0);
+-	return twdFormatter.format(n);
++/** 把「分」格式化成 NT$1,234.50。 */
++export function formatCents(cents) {
++	const n = Number(cents);
++	return twdFormatter.format(Number.isFinite(n) ? fromCents(n) : 0);
+ }
+ 
+ export function initials(name) {
+diff --git a/frontend/src/features/dept_simplification/money.test.js b/frontend/src/features/dept_simplification/money.test.js
+new file mode 100644
+index 0000000..0b5ddea
+--- /dev/null
++++ b/frontend/src/features/dept_simplification/money.test.js
+@@ -0,0 +1,55 @@
++import { describe, expect, it } from "vitest";
++
++import { evenSplitCents, formatCents, fromCents, initials, toCents } from "./money";
++
++describe("toCents / fromCents", () => {
++	it("converts using integer cents, not float math", () => {
++		expect(toCents("12.35")).toBe(1235); // 12.35 * 100 = 1235.0000000000002
++		expect(toCents(0.1 + 0.2)).toBe(30);
++		expect(fromCents(1235)).toBe(12.35);
++	});
++
++	it("treats junk input as 0", () => {
++		expect(toCents("")).toBe(0);
++		expect(toCents("abc")).toBe(0);
++		expect(toCents(undefined)).toBe(0);
++	});
++});
++
++describe("evenSplitCents", () => {
++	it("gives the leftover cents to the first people", () => {
++		expect(evenSplitCents(1000, 3)).toEqual([334, 333, 333]);
++		expect(evenSplitCents(100, 3)).toEqual([34, 33, 33]);
++	});
++
++	it("always adds back up to the total", () => {
++		for (const total of [1, 99, 1000, 123457]) {
++			for (const count of [1, 2, 3, 7, 11]) {
++				const parts = evenSplitCents(total, count);
++				expect(parts).toHaveLength(count);
++				expect(parts.reduce((a, b) => a + b, 0)).toBe(total);
++			}
++		}
++	});
++
++	it("returns an empty list for nobody", () => {
++		expect(evenSplitCents(1000, 0)).toEqual([]);
++	});
++});
++
++describe("formatCents", () => {
++	it("formats as NT$ with two decimals", () => {
++		expect(formatCents(123450)).toBe("NT$1,234.50");
++		expect(formatCents(0)).toBe("NT$0.00");
++		expect(formatCents(undefined)).toBe("NT$0.00");
++	});
++});
++
++describe("initials", () => {
++	it("uses up to two characters", () => {
++		expect(initials("小明")).toBe("小明");
++		expect(initials("阿美美")).toBe("阿美");
++		expect(initials("Amy Lin")).toBe("AL");
++		expect(initials("  ")).toBe("?");
++	});
++});
+diff --git a/frontend/src/features/dept_simplification/useDept.js b/frontend/src/features/dept_simplification/useDept.js
+index a58cc2d..9a2e85b 100644
+--- a/frontend/src/features/dept_simplification/useDept.js
++++ b/frontend/src/features/dept_simplification/useDept.js
+@@ -1,18 +1,23 @@
+ import { useCallback, useEffect, useMemo, useState } from "react";
+ 
++import { useToast } from "../../hooks/useToast";
+ import { triggerHaptic } from "../../utils/haptics";
+ import {
+ 	createExpense,
+ 	createPerson,
++	createTrip,
+ 	deleteExpense,
+ 	deletePerson,
++	deleteTrip,
+ 	fetchOverview,
+-	resetAll,
++	fetchTrips,
++	resetTrip,
+ } from "./api";
+ 
+-const TOAST_DURATION_MS = 3200;
++const ACTIVE_TRIP_KEY = "dept.activeTripId";
+ 
+ const emptyOverview = () => ({
++	trip: null,
+ 	persons: [],
+ 	expenses: [],
+ 	balances: [],
+@@ -21,52 +26,101 @@ const emptyOverview = () => ({
+ 	simplified_count: 0,
+ });
+ 
++// localStorage 在隱私模式等情況可能丟錯，包起來避免整個頁面壞掉
++function readStoredTripId() {
++	try {
++		const value = Number(window.localStorage.getItem(ACTIVE_TRIP_KEY));
++		return Number.isInteger(value) && value > 0 ? value : null;
++	} catch {
++		return null;
++	}
++}
++
++function storeTripId(id) {
++	try {
++		if (id == null) window.localStorage.removeItem(ACTIVE_TRIP_KEY);
++		else window.localStorage.setItem(ACTIVE_TRIP_KEY, String(id));
++	} catch {
++		// 無法儲存就算了，下次開啟會退回第一個旅程
++	}
++}
++
+ /** 負責「資料與動作」；表單狀態由各表單元件自己管理。 */
+ export function useDept() {
++	const { toast, notify, dismiss: dismissToast } = useToast();
++
++	const [trips, setTrips] = useState([]);
++	const [tripsReady, setTripsReady] = useState(false);
++	const [activeTripId, setActiveTripId] = useState(readStoredTripId);
+ 	const [overview, setOverview] = useState(emptyOverview);
+ 	const [loading, setLoading] = useState(true);
+ 	const [busy, setBusy] = useState(false);
+-	const [toast, setToast] = useState(null);
+-
+-	const notify = useCallback((message, type = "ok") => setToast({ message, type }), []);
+-	const dismissToast = useCallback(() => setToast(null), []);
+ 
++	// 1. 啟動時載入旅程清單，並決定目前要看哪一個
+ 	useEffect(() => {
+-		if (!toast) return undefined;
+-		const id = window.setTimeout(() => setToast(null), TOAST_DURATION_MS);
+-		return () => window.clearTimeout(id);
+-	}, [toast]);
+-
+-	const load = useCallback(async () => {
+-		const data = await fetchOverview();
+-		if (data?.persons) setOverview(data);
+-	}, []);
++		let active = true;
++		const init = async () => {
++			try {
++				const list = await fetchTrips();
++				if (!active) return;
++				setTrips(list);
++				setActiveTripId((current) =>
++					list.some((t) => t.id === current) ? current : (list[0]?.id ?? null),
++				);
++			} catch (err) {
++				if (active) notify(err.message || "無法連線後端", "error");
++			} finally {
++				if (active) setTripsReady(true);
++			}
++		};
++		init();
++		return () => {
++			active = false;
++		};
++	}, [notify]);
+ 
++	// 2. 旅程確定或切換後載入該旅程的內容（active 旗標避免舊請求覆蓋新結果）
+ 	useEffect(() => {
++		if (!tripsReady) return undefined;
+ 		let active = true;
+-		const init = async () => {
++		const sync = async () => {
++			if (activeTripId == null) {
++				setOverview(emptyOverview());
++				setLoading(false);
++				return;
++			}
++			setLoading(true);
+ 			try {
+-				await load();
++				const data = await fetchOverview(activeTripId);
++				if (active) setOverview(data);
+ 			} catch (err) {
+ 				if (active) notify(err.message || "無法連線後端", "error");
+ 			} finally {
+ 				if (active) setLoading(false);
+ 			}
+ 		};
+-		init();
++		sync();
+ 		return () => {
+ 			active = false;
+ 		};
+-	}, [load, notify]);
++	}, [tripsReady, activeTripId, notify]);
+ 
+-	/** 執行一個會改動資料的動作，成功後重新載入。回傳是否成功。 */
++	const selectTrip = useCallback((id) => {
++		setOverview(emptyOverview()); // 避免切換瞬間還看到上一個旅程的資料
++		setActiveTripId(id);
++		storeTripId(id);
++	}, []);
++
++	/**
++	 * 執行一個會改動資料的動作。task 的回傳值交給 apply 處理；回傳是否成功。
++	 * 後端會直接回傳最新的 overview，所以一個動作只需要一次請求。
++	 */
+ 	const run = useCallback(
+-		async (task, successMessage) => {
++		async (task, { success, apply = setOverview } = {}) => {
+ 			setBusy(true);
+ 			try {
+-				await task();
+-				await load();
+-				if (successMessage) notify(successMessage);
++				apply(await task());
++				if (success) notify(success);
+ 				return true;
+ 			} catch (err) {
+ 				triggerHaptic.warning();
+@@ -76,42 +130,93 @@ export function useDept() {
+ 				setBusy(false);
+ 			}
+ 		},
+-		[load, notify],
++		[notify],
+ 	);
+ 
+-	const actions = useMemo(
+-		() => ({
+-			refresh: () => run(load),
+-			addPerson: (name) => run(() => createPerson(name), `已加入 ${name}`),
++	const actions = useMemo(() => {
++		const tripId = activeTripId;
++
++		/** 樂觀更新：先讓畫面上的東西消失，失敗再還原。 */
++		const removeOptimistically = async (previous, optimistic, task, success) => {
++			setOverview(optimistic);
++			const ok = await run(task, { success });
++			if (!ok) setOverview(previous);
++			return ok;
++		};
++
++		return {
++			refresh: () => run(() => fetchOverview(tripId)),
++
++			addPerson: (name) => run(() => createPerson(tripId, name), { success: `已加入 ${name}` }),
++
+ 			removePerson: (person) =>
+-				run(() => deletePerson(person.id), `已移除 ${person.name}`),
++				removeOptimistically(
++					overview,
++					{
++						...overview,
++						persons: overview.persons.filter((p) => p.id !== person.id),
++						balances: overview.balances.filter((b) => b.person_id !== person.id),
++					},
++					() => deletePerson(tripId, person.id),
++					`已移除 ${person.name}`,
++				),
++
+ 			/** buildPayload 在 run 內執行，所以驗證錯誤會自動變成錯誤 Toast。 */
+-			addExpense: async (buildPayload, successMessage) => {
+-				const ok = await run(() => createExpense(buildPayload()), successMessage);
++			addExpense: async (buildPayload, success) => {
++				const ok = await run(() => createExpense(tripId, buildPayload()), { success });
+ 				if (ok) triggerHaptic.medium();
+ 				return ok;
+ 			},
++
+ 			removeExpense: (expenseId) => {
+ 				triggerHaptic.heavy();
+-				return run(() => deleteExpense(expenseId), "已刪除這筆記錄");
++				return removeOptimistically(
++					overview,
++					{ ...overview, expenses: overview.expenses.filter((e) => e.id !== expenseId) },
++					() => deleteExpense(tripId, expenseId),
++					"已刪除這筆記錄",
++				);
+ 			},
+-			resetAll: () => {
++
++			resetTrip: () => {
+ 				triggerHaptic.heavy();
+-				return run(resetAll, "資料已全部重置");
++				return run(() => resetTrip(tripId), { success: "已清空這個旅程的資料" });
+ 			},
+-		}),
+-		[run, load],
+-	);
++
++			addTrip: (name) =>
++				run(() => createTrip(name), {
++					success: `已建立旅程 ${name}`,
++					apply: (created) => {
++						setTrips((current) => [...current, created]);
++						selectTrip(created.id);
++					},
++				}),
++
++			removeTrip: () =>
++				run(() => deleteTrip(tripId), {
++					success: "已刪除旅程",
++					apply: () => {
++						const remaining = trips.filter((t) => t.id !== tripId);
++						setTrips(remaining);
++						selectTrip(remaining[0]?.id ?? null);
++					},
++				}),
++		};
++	}, [activeTripId, overview, trips, run, selectTrip]);
+ 
+ 	const sortedBalances = useMemo(
+-		() => [...overview.balances].sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)),
++		() =>
++			[...overview.balances].sort((a, b) => Math.abs(b.amount_cents) - Math.abs(a.amount_cents)),
+ 		[overview.balances],
+ 	);
+ 
+ 	return {
++		trips,
++		activeTrip: trips.find((t) => t.id === activeTripId) ?? null,
++		selectTrip,
+ 		overview,
+ 		persons: overview.persons,
+-		loading,
++		loading: loading || !tripsReady,
+ 		busy,
+ 		toast,
+ 		notify,
+diff --git a/frontend/src/hooks/useToast.js b/frontend/src/hooks/useToast.js
+new file mode 100644
+index 0000000..78588be
+--- /dev/null
++++ b/frontend/src/hooks/useToast.js
+@@ -0,0 +1,19 @@
++import { useCallback, useEffect, useState } from "react";
++
++const DEFAULT_DURATION_MS = 3200;
++
++/** 簡單的 Toast 狀態：notify 之後一段時間自動消失。 */
++export function useToast(duration = DEFAULT_DURATION_MS) {
++	const [toast, setToast] = useState(null);
++
++	const notify = useCallback((message, type = "ok") => setToast({ message, type }), []);
++	const dismiss = useCallback(() => setToast(null), []);
++
++	useEffect(() => {
++		if (!toast) return undefined;
++		const id = window.setTimeout(() => setToast(null), duration);
++		return () => window.clearTimeout(id);
++	}, [toast, duration]);
++
++	return { toast, notify, dismiss };
++}
+diff --git a/frontend/src/utils/apiClient.js b/frontend/src/utils/apiClient.js
+index 48683c4..36a53a0 100644
+--- a/frontend/src/utils/apiClient.js
++++ b/frontend/src/utils/apiClient.js
+@@ -9,7 +9,7 @@ export const apiClient = axios.create({
+ });
+ 
+ /** FastAPI 的 detail 可能是字串，也可能是 422 的驗證錯誤陣列。 */
+-function extractMessage(error) {
++export function extractMessage(error) {
+ 	const detail = error.response?.data?.detail;
+ 	if (Array.isArray(detail)) return detail.map((item) => item.msg).join("、");
+ 	if (typeof detail === "string") return detail;
+diff --git a/frontend/src/utils/apiClient.test.js b/frontend/src/utils/apiClient.test.js
+new file mode 100644
+index 0000000..1b8a6bb
+--- /dev/null
++++ b/frontend/src/utils/apiClient.test.js
+@@ -0,0 +1,24 @@
++import { describe, expect, it } from "vitest";
++
++import { extractMessage } from "./apiClient";
++
++const fail = (data, message = "Request failed with status code 400") => ({
++	message,
++	response: { data },
++});
++
++describe("extractMessage", () => {
++	it("uses a string detail from FastAPI", () => {
++		expect(extractMessage(fail({ detail: "這個名字已經存在" }))).toBe("這個名字已經存在");
++	});
++
++	it("joins 422 validation errors instead of returning an object", () => {
++		const detail = [{ msg: "名字不可為空白" }, { msg: "Field required" }];
++		expect(extractMessage(fail({ detail }))).toBe("名字不可為空白、Field required");
++	});
++
++	it("falls back to the error message, then a default", () => {
++		expect(extractMessage({ message: "Network Error" })).toBe("Network Error");
++		expect(extractMessage({})).toBe("請求失敗");
++	});
++});
+diff --git a/frontend/src/utils/cx.test.js b/frontend/src/utils/cx.test.js
+new file mode 100644
+index 0000000..2ca963e
+--- /dev/null
++++ b/frontend/src/utils/cx.test.js
+@@ -0,0 +1,8 @@
++import { expect, it } from "vitest";
++
++import { cx } from "./cx";
++
++it("joins truthy class names and skips the rest", () => {
++	expect(cx("a", false, null, undefined, "", "b")).toBe("a b");
++	expect(cx()).toBe("");
++});
+diff --git a/frontend/src/utils/haptics.js b/frontend/src/utils/haptics.js
+index 3fb7133..64696f2 100644
+--- a/frontend/src/utils/haptics.js
++++ b/frontend/src/utils/haptics.js
+@@ -1,8 +1,4 @@
+-import {
+-    Haptics,
+-    ImpactStyle,
+-    NotificationType,
+-} from '@capacitor/haptics';
++import { Haptics, ImpactStyle, NotificationType } from "@capacitor/haptics";
+ 
+ // 封裝安全呼叫，避免在不支援的環境報錯
+ export const triggerHaptic = {
+diff --git a/frontend/src/utils/saveImage.js b/frontend/src/utils/saveImage.js
+new file mode 100644
+index 0000000..f101d4a
+--- /dev/null
++++ b/frontend/src/utils/saveImage.js
+@@ -0,0 +1,53 @@
++import { Capacitor } from "@capacitor/core";
++
++/**
++ * 把 canvas 存成圖片。回傳 "shared" | "downloaded" | "cancelled"。
++ *  - Capacitor App：寫入快取後呼叫系統分享選單（WebView 裡的 <a download> 不會動）
++ *  - 手機瀏覽器：優先用 Web Share API 分享檔案
++ *  - 其他（桌機）：直接下載
++ */
++export async function saveImage(canvas, filename) {
++	if (Capacitor.isNativePlatform()) {
++		// 外掛只在原生環境才需要，動態載入不拖慢網頁版
++		const [{ Filesystem, Directory }, { Share }] = await Promise.all([
++			import("@capacitor/filesystem"),
++			import("@capacitor/share"),
++		]);
++		const data = canvas.toDataURL("image/png").split(",")[1];
++		const { uri } = await Filesystem.writeFile({
++			path: filename,
++			data,
++			directory: Directory.Cache,
++		});
++		try {
++			await Share.share({ title: filename, url: uri, dialogTitle: "分享結算圖卡" });
++			return "shared";
++		} catch {
++			return "cancelled"; // 使用者關閉分享選單
++		}
++	}
++
++	const blob = await new Promise((resolve, reject) =>
++		canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("無法產生圖片"))), "image/png"),
++	);
++	const file = new File([blob], filename, { type: "image/png" });
++
++	const isTouchDevice = window.matchMedia?.("(pointer: coarse)").matches;
++	if (isTouchDevice && navigator.canShare?.({ files: [file] })) {
++		try {
++			await navigator.share({ files: [file], title: filename });
++			return "shared";
++		} catch (err) {
++			if (err.name === "AbortError") return "cancelled";
++			// 其他錯誤就退回下載
++		}
++	}
++
++	const url = URL.createObjectURL(blob);
++	const link = document.createElement("a");
++	link.download = filename;
++	link.href = url;
++	link.click();
++	URL.revokeObjectURL(url);
++	return "downloaded";
++}
