@@ -8,16 +8,13 @@ import {
 	TrailingActions,
 } from "react-swipeable-list";
 
-import { formatMoney } from "../money";
+import { formatCents } from "../money";
 import ui from "../ui.module.css";
 import styles from "./HistoryPanel.module.css";
 
-const AMOUNT_EPSILON = 0.005;
-
 function ExpenseItem({ expense, nameOf, onDelete }) {
 	const isDirect =
-		expense.splits.length === 1 &&
-		Math.abs(expense.splits[0].amount - expense.total_amount) < AMOUNT_EPSILON;
+		expense.splits.length === 1 && expense.splits[0].amount_cents === expense.total_cents;
 	const payer = nameOf(expense.payer_id);
 
 	const trailingActions = (
@@ -40,8 +37,8 @@ function ExpenseItem({ expense, nameOf, onDelete }) {
 							<p className={styles.description}>{expense.description}</p>
 							<p className={styles.detail}>
 								{isDirect
-									? `${payer} 幫 ${nameOf(expense.splits[0].person_id)} 代墊 ${formatMoney(expense.total_amount)}`
-									: `總額 ${formatMoney(expense.total_amount)}，由 ${payer} 先付`}
+									? `${payer} 幫 ${nameOf(expense.splits[0].person_id)} 代墊 ${formatCents(expense.total_cents)}`
+									: `總額 ${formatCents(expense.total_cents)}，由 ${payer} 先付`}
 							</p>
 						</div>
 						{/* 滑鼠使用者看不到滑動提示，所以在精準指標裝置上多給一顆按鈕 */}
@@ -61,12 +58,8 @@ function ExpenseItem({ expense, nameOf, onDelete }) {
 							{expense.splits.map((s) => {
 								const isPayer = s.person_id === expense.payer_id;
 								return (
-									<span
-										key={s.id}
-										className={styles.tag}
-										data-role={isPayer ? "payer" : "debtor"}
-									>
-										{nameOf(s.person_id)} {isPayer ? "自付" : "欠"} {formatMoney(s.amount)}
+									<span key={s.id} className={styles.tag} data-role={isPayer ? "payer" : "debtor"}>
+										{nameOf(s.person_id)} {isPayer ? "自付" : "欠"} {formatCents(s.amount_cents)}
 									</span>
 								);
 							})}

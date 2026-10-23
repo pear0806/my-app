@@ -1,4 +1,4 @@
-import { evenSplitCents, fromCents, toCents } from "./money";
+import { evenSplitCents, toCents } from "./money";
 
 /**
  * 把表單輸入組成後端需要的 payload。
@@ -13,9 +13,7 @@ function toTwdCents(amount, rate) {
 }
 
 function withForeignNote(description, amount, currency) {
-	return currency === "TWD"
-		? description
-		: `${description} (原外幣: ${amount} ${currency})`;
+	return currency === "TWD" ? description : `${description} (原外幣: ${amount} ${currency})`;
 }
 
 export function buildGroupExpense({
@@ -31,34 +29,30 @@ export function buildGroupExpense({
 	}
 	const totalCents = toTwdCents(amount, rate);
 	const parts = evenSplitCents(totalCents, participantIds.length);
+	if (parts.some((cents) => cents <= 0)) {
+		throw new Error("金額太小，無法分給這麼多人");
+	}
 
 	return {
 		description: withForeignNote(description.trim() || "群組花費", amount, currency),
-		total_amount: fromCents(totalCents),
+		total_cents: totalCents,
 		payer_id: Number(payerId),
 		splits: participantIds.map((personId, index) => ({
 			person_id: personId,
-			amount: fromCents(parts[index]),
+			amount_cents: parts[index],
 		})),
 	};
 }
 
-export function buildDirectExpense({
-	description,
-	amount,
-	currency,
-	rate,
-	payerId,
-	debtorId,
-}) {
+export function buildDirectExpense({ description, amount, currency, rate, payerId, debtorId }) {
 	if (!amount || !payerId || !debtorId) throw new Error("請選擇雙方並填寫金額");
 	if (payerId === debtorId) throw new Error("出錢人與被代墊人不能相同");
 	const totalCents = toTwdCents(amount, rate);
 
 	return {
 		description: withForeignNote(description.trim() || "指定代墊", amount, currency),
-		total_amount: fromCents(totalCents),
+		total_cents: totalCents,
 		payer_id: Number(payerId),
-		splits: [{ person_id: Number(debtorId), amount: fromCents(totalCents) }],
+		splits: [{ person_id: Number(debtorId), amount_cents: totalCents }],
 	};
 }

@@ -22,10 +22,10 @@ const twdFormatter = new Intl.NumberFormat("en-US", {
 	minimumFractionDigits: 2,
 });
 
-export function formatMoney(amount) {
-	const n = Number(amount);
-	if (!Number.isFinite(n)) return twdFormatter.format(0);
-	return twdFormatter.format(n);
+/** 把「分」格式化成 NT$1,234.50。 */
+export function formatCents(cents) {
+	const n = Number(cents);
+	return twdFormatter.format(Number.isFinite(n) ? fromCents(n) : 0);
 }
 
 export function initials(name) {

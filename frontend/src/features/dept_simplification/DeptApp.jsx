@@ -9,11 +9,15 @@ import ExpensePanel from "./components/ExpensePanel";
 import HistoryPanel from "./components/HistoryPanel";
 import MemberPanel from "./components/MemberPanel";
 import SettlementPanel from "./components/SettlementPanel";
-import Toast from "./components/Toast";
+import TripBar from "./components/TripBar";
+import Toast from "../../components/Toast/Toast";
 import { useDept } from "./useDept";
 
 export default function DeptApp() {
 	const {
+		trips,
+		activeTrip,
+		selectTrip,
 		overview,
 		persons,
 		loading,
@@ -44,50 +48,60 @@ export default function DeptApp() {
 						</p>
 					</div>
 					<button type="button" className={styles.refresh} onClick={actions.refresh}>
-						<RefreshCw
-							className={cx(loading || busy ? styles.spin : "")}
-							aria-hidden="true"
-						/>
+						<RefreshCw className={cx(loading || busy ? styles.spin : "")} aria-hidden="true" />
 						重新整理
 					</button>
 				</header>
 
-				<BalanceBoard
-					balances={sortedBalances}
-					memberCount={persons.length}
-					loading={loading}
+				<TripBar
+					trips={trips}
+					activeTripId={activeTrip?.id ?? null}
+					busy={busy}
+					onSelect={selectTrip}
+					onCreate={actions.addTrip}
 				/>
 
-				<div className={styles.layout}>
-					<div className={styles.column}>
-						<MemberPanel
-							persons={persons}
-							busy={busy}
-							onAdd={actions.addPerson}
-							onRemove={actions.removePerson}
+				{activeTrip && (
+					<>
+						<BalanceBoard
+							balances={sortedBalances}
+							memberCount={persons.length}
+							loading={loading}
 						/>
-						<ExpensePanel
-							persons={persons}
-							busy={busy}
-							onAddExpense={actions.addExpense}
-						/>
-					</div>
 
-					<div className={styles.column}>
-						<SettlementPanel
-							overview={overview}
-							savedCount={savedCount}
-							settledEveryone={settledEveryone}
-							onNotify={notify}
-						/>
-						<HistoryPanel
-							expenses={overview.expenses}
-							persons={persons}
-							onDelete={actions.removeExpense}
-						/>
-						<DangerPanel busy={busy} onReset={actions.resetAll} />
-					</div>
-				</div>
+						<div className={styles.layout}>
+							<div className={styles.column}>
+								<MemberPanel
+									persons={persons}
+									busy={busy}
+									onAdd={actions.addPerson}
+									onRemove={actions.removePerson}
+								/>
+								<ExpensePanel persons={persons} busy={busy} onAddExpense={actions.addExpense} />
+							</div>
+
+							<div className={styles.column}>
+								<SettlementPanel
+									overview={overview}
+									savedCount={savedCount}
+									settledEveryone={settledEveryone}
+									onNotify={notify}
+								/>
+								<HistoryPanel
+									expenses={overview.expenses}
+									persons={persons}
+									onDelete={actions.removeExpense}
+								/>
+								<DangerPanel
+									tripName={activeTrip.name}
+									busy={busy}
+									onReset={actions.resetTrip}
+									onDeleteTrip={actions.removeTrip}
+								/>
+							</div>
+						</div>
+					</>
+				)}
 			</div>
 
 			<Toast toast={toast} onClose={dismissToast} />

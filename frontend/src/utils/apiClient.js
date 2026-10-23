@@ -9,7 +9,7 @@ export const apiClient = axios.create({
 });
 
 /** FastAPI 的 detail 可能是字串，也可能是 422 的驗證錯誤陣列。 */
-function extractMessage(error) {
+export function extractMessage(error) {
 	const detail = error.response?.data?.detail;
 	if (Array.isArray(detail)) return detail.map((item) => item.msg).join("、");
 	if (typeof detail === "string") return detail;

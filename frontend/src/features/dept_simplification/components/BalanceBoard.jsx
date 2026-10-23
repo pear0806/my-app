@@ -1,12 +1,10 @@
-import { formatMoney } from "../money";
+import { formatCents } from "../money";
 import Avatar from "./Avatar";
 import styles from "./BalanceBoard.module.css";
 
-const BALANCE_EPSILON = 0.005;
-
-function describeBalance(amount) {
-	if (amount > BALANCE_EPSILON) return { tone: "positive", text: `應收 ${formatMoney(amount)}` };
-	if (amount < -BALANCE_EPSILON) return { tone: "negative", text: `應付 ${formatMoney(-amount)}` };
+function describeBalance(cents) {
+	if (cents > 0) return { tone: "positive", text: `應收 ${formatCents(cents)}` };
+	if (cents < 0) return { tone: "negative", text: `應付 ${formatCents(-cents)}` };
 	return { tone: "neutral", text: "已結清" };
 }
 
@@ -24,7 +22,7 @@ export default function BalanceBoard({ balances, memberCount, loading }) {
 	return (
 		<ul className={styles.board}>
 			{balances.map((b) => {
-				const { tone, text } = describeBalance(b.amount);
+				const { tone, text } = describeBalance(b.amount_cents);
 				return (
 					<li key={b.person_id} className={styles.card}>
 						<Avatar name={b.name} />

@@ -1,7 +1,8 @@
 import { ArrowRight, Check, Copy, ImageDown } from "lucide-react";
 import { useRef, useState } from "react";
 
-import { formatMoney } from "../money";
+import { saveImage } from "../../../utils/saveImage";
+import { formatCents } from "../money";
 import styles from "./SettlementPanel.module.css";
 import ui from "../ui.module.css";
 
@@ -18,7 +19,7 @@ export default function SettlementPanel({ overview, savedCount, settledEveryone,
 
 	const copyText = async () => {
 		const text = settlements
-			.map((s) => `${s.from_person} → ${s.to_person} ${formatMoney(s.amount)}`)
+			.map((s) => `${s.from_person} → ${s.to_person} ${formatCents(s.amount_cents)}`)
 			.join("\n");
 		try {
 			await navigator.clipboard.writeText(text);
@@ -40,10 +41,9 @@ export default function SettlementPanel({ overview, savedCount, settledEveryone,
 				backgroundColor: getComputedStyle(element).backgroundColor,
 				scale: 3,
 			});
-			const link = document.createElement("a");
-			link.download = `分帳結算_${new Date().toISOString().slice(0, 10)}.png`;
-			link.href = canvas.toDataURL("image/png");
-			link.click();
+			const filename = `分帳結算_${new Date().toISOString().slice(0, 10)}.png`;
+			const result = await saveImage(canvas, filename);
+			if (result === "downloaded") onNotify("已下載請款圖卡");
 		} catch (err) {
 			onNotify(`圖卡生成失敗：${err.message ?? err}`, "error");
 		}
@@ -72,9 +72,7 @@ export default function SettlementPanel({ overview, savedCount, settledEveryone,
 				)}
 			</div>
 
-			{savedCount > 0 && (
-				<p className={styles.saved}>少轉 {savedCount} 次，大家對一次就能結清。</p>
-			)}
+			{savedCount > 0 && <p className={styles.saved}>少轉 {savedCount} 次，大家對一次就能結清。</p>}
 
 			{settlements.length === 0 ? (
 				<p className={styles.empty}>目前沒有需要轉帳的債務。</p>
@@ -89,7 +87,7 @@ export default function SettlementPanel({ overview, savedCount, settledEveryone,
 									<ArrowRight className={styles.arrow} aria-label="轉給" />
 									<span className={styles.person}>{s.to_person}</span>
 								</div>
-								<span className={styles.amount}>{formatMoney(s.amount)}</span>
+								<span className={styles.amount}>{formatCents(s.amount_cents)}</span>
 							</li>
 						))}
 					</ul>

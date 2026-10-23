@@ -1,8 +1,4 @@
-import {
-    Haptics,
-    ImpactStyle,
-    NotificationType,
-} from '@capacitor/haptics';
+import { Haptics, ImpactStyle, NotificationType } from "@capacitor/haptics";
 
 // 封裝安全呼叫，避免在不支援的環境報錯
 export const triggerHaptic = {

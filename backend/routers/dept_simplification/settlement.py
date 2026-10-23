@@ -1,38 +1,20 @@
 """以分為單位計算淨額，並盡量減少轉帳次數。"""
 
 from collections import defaultdict
-from decimal import Decimal, ROUND_HALF_UP
 import heapq
-
-CENT = Decimal("0.01")
-
-
-def to_cents(value) -> int:
-    quantized = Decimal(str(value)).quantize(CENT, rounding=ROUND_HALF_UP)
-    return int(quantized * 100)
-
-
-def from_cents(cents: int) -> float:
-    return float(Decimal(cents) / Decimal(100))
-
-
-def even_split_cents(total_cents: int, n: int) -> list[int]:
-    """把總額平分，餘數分給前面幾人，確保加總精確。"""
-    if n <= 0:
-        return []
-    base, remainder = divmod(total_cents, n)
-    return [base + (1 if i < remainder else 0) for i in range(n)]
 
 
 def net_balances_cents(persons, expenses) -> dict[int, int]:
+    """每個人的淨額（分）：正數 = 應收，負數 = 應付。"""
     balances = {person.id: 0 for person in persons}
     for expense in expenses:
-        payer_id = expense.payer_id
-        balances[payer_id] = balances.get(
-            payer_id, 0) + to_cents(expense.total_amount)
+        balances[expense.payer_id] = (
+            balances.get(expense.payer_id, 0) + expense.total_cents
+        )
         for split in expense.splits:
-            pid = split.person_id
-            balances[pid] = balances.get(pid, 0) - to_cents(split.amount)
+            balances[split.person_id] = (
+                balances.get(split.person_id, 0) - split.amount_cents
+            )
     return balances
 
 

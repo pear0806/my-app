@@ -1,18 +1,19 @@
-annotated-doc
-annotated-types
-anyio
-click
-fastapi
-greenlet
-h11
-idna
-pydantic
-pydantic_core
-SQLAlchemy
-starlette
-typing-inspection
-typing_extensions
-uvicorn
-opencv-python-headless
- numpy
- python-multipart
+# 以 Python 3.12 測試通過的版本釘住，避免日後重新安裝時行為改變
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+click==8.3.1
+fastapi==0.161.1
+greenlet==3.3.2
+h11==0.16.0
+idna==3.11
+numpy==2.4.4
+opencv-python-headless==4.13.0.92
+pydantic==2.14.1
+pydantic_core==2.50.1
+python-multipart==0.0.32
+SQLAlchemy==2.1.6
+starlette==1.9.0
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+uvicorn==0.54.0

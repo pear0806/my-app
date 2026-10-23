@@ -1,6 +1,7 @@
 import { Camera } from "lucide-react";
 
 import BackButton from "../../components/BackButton/BackButton";
+import Toast from "../../components/Toast/Toast";
 import styles from "./BlockBlastApp.module.css";
 import { useBlockBlast } from "./useBlockBlast";
 
@@ -9,11 +10,7 @@ const MiniBlock = ({ matrix }) => (
 		{matrix.map((row, r) => (
 			<div key={r} className={styles.miniRow}>
 				{row.map((val, c) => (
-					<div
-						key={c}
-						className={styles.miniCell}
-						data-filled={val ? "true" : "false"}
-					/>
+					<div key={c} className={styles.miniCell} data-filled={val ? "true" : "false"} />
 				))}
 			</div>
 		))}
@@ -30,8 +27,10 @@ export default function BlockBlastApp() {
 		loading,
 		overlay,
 		setActiveSlot,
-		handleMouseDown,
-		handleMouseEnter,
+		toast,
+		dismissToast,
+		handleBoardPointerDown,
+		handleBoardPointerMove,
 		handlePickBlock,
 		handleSolve,
 		clearBoard,
@@ -50,7 +49,11 @@ export default function BlockBlastApp() {
 				網格來快速設定藍色方塊。點擊下方三個框框選擇你要放入的圖形。
 			</p>
 
-			<div className={styles.board}>
+			<div
+				className={styles.board}
+				onPointerDown={handleBoardPointerDown}
+				onPointerMove={handleBoardPointerMove}
+			>
 				{board.map((row, r) =>
 					row.map((cell, c) => {
 						const overlaySteps = overlay[r][c];
@@ -60,10 +63,10 @@ export default function BlockBlastApp() {
 							<div
 								key={`${r}-${c}`}
 								className={styles.cell}
+								data-row={r}
+								data-col={c}
 								data-filled={cell === 1 ? "true" : undefined}
 								data-step={step}
-								onMouseDown={() => handleMouseDown(r, c)}
-								onMouseEnter={() => handleMouseEnter(r, c)}
 							>
 								{stepText}
 							</div>
@@ -75,25 +78,15 @@ export default function BlockBlastApp() {
 			<div className={styles.slots}>
 				{[0, 1, 2].map((slotIndex) => {
 					const blockId = selectedBlocks[slotIndex];
-					const blockData = availableBlocks.find(
-						(b) => b.id === blockId,
-					);
+					const blockData = availableBlocks.find((b) => b.id === blockId);
 					return (
 						<div
 							key={slotIndex}
 							className={styles.slot}
 							data-active={activeSlot === slotIndex ? "true" : undefined}
-							onClick={() =>
-								setActiveSlot(
-									activeSlot === slotIndex ? null : slotIndex,
-								)
-							}
+							onClick={() => setActiveSlot(activeSlot === slotIndex ? null : slotIndex)}
 						>
-							{blockData ? (
-								<MiniBlock matrix={blockData.matrix} />
-							) : (
-								"點擊選擇"
-							)}
+							{blockData ? <MiniBlock matrix={blockData.matrix} /> : "點擊選擇"}
 						</div>
 					);
 				})}
@@ -114,11 +107,7 @@ export default function BlockBlastApp() {
 			)}
 
 			<div className={styles.actions}>
-				<button
-					className={styles.button}
-					onClick={handleSolve}
-					disabled={loading}
-				>
+				<button className={styles.button} onClick={handleSolve} disabled={loading}>
 					{loading ? "計算中..." : "計算最佳解"}
 				</button>
 				<button className={styles.button} data-variant="fill" onClick={fillBoard}>
@@ -127,12 +116,7 @@ export default function BlockBlastApp() {
 				<label className={styles.button} data-variant="camera">
 					<Camera size={20} />
 					截圖辨識
-					<input
-						type="file"
-						accept="image/*"
-						onChange={handleImageUpload}
-						hidden
-					/>
+					<input type="file" accept="image/*" onChange={handleImageUpload} hidden />
 				</label>
 				<button className={styles.button} data-variant="clear" onClick={clearBoard}>
 					清空盤面
@@ -145,17 +129,16 @@ export default function BlockBlastApp() {
 						<div>
 							<h3 className={styles.resultTitle}>解答完成！</h3>
 							<p>
-								請參考上方盤面的數字順序 <b>1 → 2 → 3</b>{" "}
-								放入方塊。
+								請參考上方盤面的數字順序 <b>1 → 2 → 3</b> 放入方塊。
 							</p>
 						</div>
 					) : (
-						<p className={styles.error}>
-							{solution.message}
-						</p>
+						<p className={styles.error}>{solution.message}</p>
 					)}
 				</div>
 			)}
+
+			<Toast toast={toast} onClose={dismissToast} />
 		</div>
 	);
 }

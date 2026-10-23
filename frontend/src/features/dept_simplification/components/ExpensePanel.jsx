@@ -249,18 +249,14 @@ export default function ExpensePanel({ persons, busy, onAddExpense }) {
 					persons={persons}
 					busy={busy}
 					fx={fx}
-					onSubmit={(values) =>
-						onAddExpense(() => buildGroupExpense(values), "已記錄群組花費")
-					}
+					onSubmit={(values) => onAddExpense(() => buildGroupExpense(values), "已記錄群組花費")}
 				/>
 			) : (
 				<DirectForm
 					persons={persons}
 					busy={busy}
 					fx={fx}
-					onSubmit={(values) =>
-						onAddExpense(() => buildDirectExpense(values), "已記錄代墊")
-					}
+					onSubmit={(values) => onAddExpense(() => buildDirectExpense(values), "已記錄代墊")}
 				/>
 			)}
 		</section>

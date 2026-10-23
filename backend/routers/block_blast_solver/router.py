@@ -1,74 +1,16 @@
-from fastapi import FastAPI, HTTPException, APIRouter, File, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List
-import sqlite3
-import json
 import itertools
+from typing import List
+
 import cv2
 import numpy as np
+from fastapi import APIRouter, File, HTTPException, UploadFile
+from pydantic import BaseModel
+
+from .shapes import SHAPES, SHAPES_BY_ID
 
 router = APIRouter()
 
-# ----------------- 資料庫初始化 (SQLite) -----------------
-
-DB_FILE = "blocks.db"
-
-
-def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    # 開發階段專用：每次重啟都強制清空舊表，這樣就不用手動刪除 blocks.db 了！
-    cursor.execute('DROP TABLE IF EXISTS shapes')
-
-    cursor.execute('''
-        CREATE TABLE shapes (
-            id INTEGER PRIMARY KEY,
-            name TEXT,
-            matrix TEXT
-        )
-    ''')
-
-    default_shapes = [
-        (1, "單格", "[[1]]"),
-        (2, "2x2 方塊", "[[1,1],[1,1]]"),
-        (3, "3x3 方塊", "[[1,1,1],[1,1,1],[1,1,1]]"),
-        (4, "橫條 (1x2)", "[[1,1]]"),
-        (5, "直條 (2x1)", "[[1],[1]]"),
-        (6, "橫條 (1x3)", "[[1,1,1]]"),
-        (7, "直條 (3x1)", "[[1],[1],[1]]"),
-        (8, "橫條 (1x4)", "[[1,1,1,1]]"),
-        (9, "直條 (4x1)", "[[1],[1],[1],[1]]"),
-        (10, "橫條 (1x5)", "[[1,1,1,1,1]]"),
-        (11, "直條 (5x1)", "[[1],[1],[1],[1],[1]]"),
-        (12, "T型 (上)", "[[0,1,0],[1,1,1]]"),
-        (13, "T型 (下)", "[[1,1,1],[0,1,0]]"),
-        (14, "T型 (右)", "[[1,0],[1,1],[1,0]]"),
-        (15, "T型 (左)", "[[0,1],[1,1],[0,1]]"),
-        (16, "Z型(左)", "[[1, 1, 0], [0, 1, 1]]"),
-        (17, "Z型(右)", "[[0, 1, 1], [1, 1, 0]]"),
-        (18, "勾型(右上)", "[[0, 0, 1], [1, 1, 1]]"),
-        (19, "勾型(右下)", "[[1, 1, 1], [0, 0, 1]]"),
-        (20, "勾型(左上)", "[[1, 0, 0], [1, 1, 1]]"),
-        (21, "勾型(左下)", "[[1, 1, 1], [1, 0, 0]]"),
-        (22, "小L(右上)", "[[1, 1],[0, 1]]"),
-        (23, "小L(右下)", "[[0, 1],[1, 1]]"),
-        (24, "小L(左上)", "[[1, 1],[1, 0]]"),
-        (25, "小L(左下)", "[[1, 0],[1, 1]]"),
-        (26, "大L(右上)", "[[1, 1, 1],[0, 0, 1],[0, 0, 1]]"),
-        (27, "大L(右下)", "[[0, 0, 1],[0, 0, 1],[1, 1, 1]]"),
-        (28, "大L(左上)", "[[1, 1, 1],[1, 0, 0],[1, 0, 0]]"),
-        (29, "大L(左下)", "[[1, 0, 0],[1, 0, 0],[1, 1, 1]]"),
-    ]
-
-    cursor.executemany(
-        "INSERT INTO shapes (id, name, matrix) VALUES (?, ?, ?)", default_shapes)
-    conn.commit()
-    conn.close()
-
-
-init_db()
+BOARD_SIZE = 8
 
 # ----------------- 資料模型 (Pydantic) -----------------
 
@@ -78,34 +20,20 @@ class SolveRequest(BaseModel):
     block_ids: List[int]    # 3個方塊的 ID
 
 
-class CustomBlock(BaseModel):
-    id: str
-    matrix: List[List[int]]
-
-
-class solveRequest(BaseModel):
-    board: List[List[int]]
-    block_ids: List[int]
-    custom_block: List[CustomBlock] = []
-
 # ----------------- 核心演算法 -----------------
 
 
 def get_block_matrix(block_id: int) -> List[List[int]]:
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("SELECT matrix FROM shapes WHERE id = ?", (block_id,))
-    row = cursor.fetchone()
-    conn.close()
-    if not row:
+    shape = SHAPES_BY_ID.get(block_id)
+    if shape is None:
         raise HTTPException(status_code=404, detail=f"找不到方塊 ID {block_id}")
-    return json.loads(row[0])
+    return shape["matrix"]
 
 
 def can_place(board, block, r, c):
     """檢查方塊是否能放在指定位置"""
     bh, bw = len(block), len(block[0])
-    if r + bh > 8 or c + bw > 8:
+    if r + bh > BOARD_SIZE or c + bw > BOARD_SIZE:
         return False
     for i in range(bh):
         for j in range(bw):
@@ -155,22 +83,18 @@ def evaluate_board(board, lines_cleared):
 
 @router.get("/blocks")
 def get_all_blocks():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, name, matrix FROM shapes")
-    rows = cursor.fetchall()
-    conn.close()
-    return [{"id": r[0], "name": r[1], "matrix": json.loads(r[2])} for r in rows]
+    return SHAPES
 
 
 @router.post("/recognize")
-async def recognize_screenshot(file: UploadFile = File(...)):
-    if not file.content_type.startswith("image/"):
+def recognize_screenshot(file: UploadFile = File(...)):
+    # 用一般 def：OpenCV 運算很吃 CPU，交給 threadpool 才不會卡住整個伺服器
+    if not (file.content_type or "").startswith("image/"):
         raise HTTPException(status_code=400, detail="請上傳圖片檔案")
 
     try:
         # 1. 讀取上傳的圖片轉為 OpenCV 格式
-        contents = await file.read()
+        contents = file.file.read()
         nparr = np.frombuffer(contents, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if img is None:
@@ -241,6 +165,9 @@ async def recognize_screenshot(file: UploadFile = File(...)):
 
         return {"status": "success", "board": board_matrix}
 
+    except HTTPException:
+        # 自己丟出的 4xx 要原樣回傳，不能被下面包成 500
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

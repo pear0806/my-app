@@ -32,11 +32,7 @@ export default function MemberPanel({ persons, busy, onAdd, onRemove }) {
 					value={name}
 					onChange={(e) => setName(e.target.value)}
 				/>
-				<button
-					type="submit"
-					className={cx(ui.button, ui.buttonDark)}
-					disabled={busy || !trimmed}
-				>
+				<button type="submit" className={cx(ui.button, ui.buttonDark)} disabled={busy || !trimmed}>
 					<Plus aria-hidden="true" />
 					新增
 				</button>
